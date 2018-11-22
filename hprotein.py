@@ -1,4 +1,5 @@
 # imports
+import logging
 import distutils.util
 import cv2
 import numpy as np
@@ -14,20 +15,33 @@ from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStoppin
 from keras.preprocessing.image import ImageDataGenerator
 from keras.models import Sequential, load_model, Model
 
+from sklearn.metrics import f1_score
 
-
+from sklearn.model_selection import train_test_split
 
 
 # constants
 COLORS = ['red','green', 'blue', 'yellow']
 SHAPE = (192, 192, 4)
 THRESHOLD = 0.05
+SEED = 42
 
 # -------------------------------------------------------------
 # Converts a text based "True" or "False" to a python bool
 # -------------------------------------------------------------
 def text_to_bool(text_bool):
     return bool(distutils.util.strtobool(text_bool))
+
+
+# ------------------------------------------------
+# copies a file to google cloud storage
+# ------------------------------------------------
+def copy_file_to_gcs(fname_in, fname_out):
+
+    logging.info('Writing {} to gcs at {}...'.format(fname_in, fname_out))
+    with file_io.FileIO(fname_in, mode='rb') as f_in:
+        with file_io.FileIO(fname_out, mode='wb+') as f_out:
+            f_out.write(f_in.read())
 
 
 # -----------------------------------------
@@ -50,6 +64,7 @@ def get_specimen_ids(path):
 # make filenames from the specimen id
 # -----------------------------------------
 def get_image_fname(path, specimen_id, color, lo_res=True):
+
     # construct filename
     if lo_res:
         fname = path + '/' + specimen_id + '_' + color + '.png'
@@ -69,6 +84,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
     # ---------------------------------------------
     def __init__(self,
                  args,
+                 path,
                  specimen_ids,
                  labels,
                  shape=SHAPE,
@@ -77,6 +93,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  augment=False):
 
         self.args = args
+        self.path=path
         self.specimen_ids = specimen_ids  # list of features
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
@@ -110,7 +127,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
             print("Error: use_cache not implemented!")
         else:
             for i, specimen_id in enumerate(specimen_ids):
-                feature_batch[i] = self.get_stacked_image(self.args, specimen_id)
+                feature_batch[i] = self.get_stacked_image(specimen_id)
 
         # augment images if desired
         if self.augment:
@@ -121,10 +138,10 @@ class HproteinDataGenerator(keras.utils.Sequence):
     # -----------------------------------------
     # get a single image
     # -----------------------------------------
-    def get_single_image(self, args, specimen_id, color, lo_res=True):
+    def get_single_image(self, specimen_id, color, lo_res=True):
 
         # get image file name
-        fname = get_image_fname(args.train_folder, specimen_id, color, lo_res)
+        fname = get_image_fname(self.path, specimen_id, color, lo_res)
 
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
@@ -136,14 +153,14 @@ class HproteinDataGenerator(keras.utils.Sequence):
     # -----------------------------------------
     # get a stacked (4-channel) image
     # -----------------------------------------
-    def get_stacked_image(self, args, specimen_id, lo_res=True):
+    def get_stacked_image(self, specimen_id, lo_res=True):
 
         # create a numpy array to place the 1-channel images into
         image = np.zeros((self.shape[0], self.shape[1], 4), dtype=np.uint8)
 
         for n, color in enumerate(COLORS):
             # get a single image
-            i = self.get_single_image(args, specimen_id, color, lo_res)
+            i = self.get_single_image(specimen_id, color, lo_res)
 
             # store it a channel
             image[:, :, n] = i
@@ -154,7 +171,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
 # -----------------------------------------------------------
 # get the available specimen ids and corresponding labels
 # -----------------------------------------------------------
-def get_train_data(train_path, label_path):
+def get_data(train_path, label_path):
+
     # get the list of specimen ids
     specimen_ids = get_specimen_ids(train_path)
 
@@ -189,11 +207,45 @@ def get_train_data(train_path, label_path):
     return np.array(specimen_ids), np.array(labels)
 
 
+# -----------------------------------------------------------
+# get the specimen ids to predict
+# -----------------------------------------------------------
+def get_predict_data(test_path, output_path):
+    # get the list of specimen ids for which there are images
+    specimen_ids = get_specimen_ids(test_path)
+
+    # get the list of submission specimen ids required
+    submit_data = pd.read_csv(output_path + '/sample_submission.csv')
+
+    # get the subset of labels that match the specimen images that are on TEST_PATH
+    submit_subset = submit_data.loc[submit_data['Id'].isin(specimen_ids)]
+
+    # set up the list that will contain the list of encoded labels for each specimen id
+    predicted_labels = np.zeros((len(specimen_ids), 28), dtype=np.uint8)
+
+    return np.array(specimen_ids), predicted_labels
+
+
+# -----------------------------
+# get train/test split
+# -----------------------------
+def get_train_test_split(args, test_size=0.1):
+
+    logging.info('Loading datasets from {} and {} ...'.format(args.train_folder, args.label_folder))
+    specimen_ids, labels = get_data(args.train_folder, args.label_folder)
+
+    logging.info('Creating train|test split of {}|{}'.format(1-test_size, test_size))
+    train_set_sids, val_set_sids, \
+    train_set_lbls, val_set_lbls = train_test_split(specimen_ids, labels, test_size=test_size, random_state=SEED)
+
+    return train_set_sids, val_set_sids, train_set_lbls, val_set_lbls
+
+
 # --------------------------------
 # calculate the f1 statistic
 # --------------------------------
 def f1(y_true, y_pred):
-    # y_pred = K.round(y_pred)
+
     y_pred = K.cast(K.greater(K.clip(y_pred, 0, 1), THRESHOLD), K.floatx())
     tp = K.sum(K.cast(y_true * y_pred, 'float'), axis=0)
     tn = K.sum(K.cast((1 - y_true) * (1 - y_pred), 'float'), axis=0)
@@ -213,6 +265,7 @@ def f1(y_true, y_pred):
 # calculate the f1 loss
 # --------------------------------
 def f1_loss(y_true, y_pred):
+
     f = f1(y_true, y_pred)
 
     return 1 - K.mean(f)
@@ -222,6 +275,7 @@ def f1_loss(y_true, y_pred):
 # create the model
 # ------------------------------
 def create_model(input_shape):
+
     dropRate = 0.25
 
     init = Input(input_shape)
@@ -280,3 +334,34 @@ def create_model(input_shape):
     model = Model(init, x)
 
     return model
+
+
+def get_max_fscore_matrix(val_predictions, val_labels):
+
+    # get a range between 0 and 1 by 1000ths
+    rng = np.arange(0, 1, 0.001)
+
+    # set up an array to catch individual fscores for each class
+    fscores = np.zeros((rng.shape[0], 28))
+
+    # loop through each prediction above the a threshold and calculate the fscore
+    for j,k in enumerate(rng):
+        for i in range(28):
+            p = np.array(val_predictions[:,i]>k, dtype=np.int8)
+            score = f1_score(val_labels[:,i], p, average='binary')
+            fscores[j,i] = score
+
+    # log results for inspection
+    logging.info('Individual F1-scores for each class:')
+    logging.info(np.max(fscores, axis=0))
+    logging.info('Macro F1-score CV ='.format(np.mean(np.max(fscores, axis=0))))
+
+    # Make a matrix that will hold the best threshold for each class to maximize Fscore
+    max_fscore_thresholds = np.empty(28, dtype=np.float16)
+    for i in range(28):
+        max_fscore_thresholds[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
+
+    logging.info('Probability threshold maximizing CV F1-score for each class:')
+    logging.info(max_fscore_thresholds)
+
+    return max_fscore_thresholds

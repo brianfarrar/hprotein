@@ -5,9 +5,12 @@ import json
 import os
 import uuid
 import numpy as np
+import pandas as pd
 import hprotein
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 from keras.optimizers import Adam
+from keras.models import load_model
+
 
 # -------------------------------------------------------------
 # Runs the model.  This is the main runner for this package.
@@ -31,6 +34,9 @@ def run(argv=None):
     parser.add_argument('--validation_steps', dest='validation_steps', default=10, type=int,
                         help='Number of validation_steps')
 
+    parser.add_argument('--validation_split', dest='validation_split', default=0.1, type=float,
+                        help='Number of validation_steps')
+
     parser.add_argument('--run_predict', dest='run_predict', default='True',
                         help='Text boolean to decide whether to run predict')
 
@@ -49,8 +55,8 @@ def run(argv=None):
     parser.add_argument('--train_folder', dest='train_folder', default='./stage1_data',
                         help='Folder that contains the train data files')
 
-    parser.add_argument('--output_folder', dest='output_folder', default='./output',
-                        help='Folder to output images to')
+    parser.add_argument('--predict_folder', dest='predict_folder', default='./stage1_predict',
+                        help='Folder that contains the data files to predict')
 
     parser.add_argument('--submission_folder', dest='submission_folder', default='./submission',
                         help='Folder for submission csv')
@@ -65,48 +71,43 @@ def run(argv=None):
     if hprotein.text_to_bool(args.new_model):
         unique_id = str(uuid.uuid4())[-6:]
         logging.info('New model number -> {}'.format(unique_id))
-        args.model_folder = '{}_{}'.format(args.model_folder, unique_id)
-        args.output_folder = '{}_{}'.format(args.output_folder, unique_id)
+        args.model_name = '{}_{}'.format(args.model_name, unique_id)
     else:
-        unique_id = args.model_folder.split('_')[-1]
-        args.output_folder = '{}_{}'.format(args.output_folder, unique_id)
+        unique_id = args.model_name.split('_')[-1]
+
+    # get data and create train/test split
+    train_specimen_ids, \
+    val_specimen_ids, \
+    train_labels, \
+    val_labels = hprotein.get_train_test_split(args, test_size=args.validation_split)
+
+    # create data generators
+    logging.info('Creating Hprotein training data generator...')
+    training_generator = hprotein.HproteinDataGenerator(args, args.train_folder, train_specimen_ids, train_labels)
+    logging.info('Creating Hprotein validation data generator...')
+    val_generator = hprotein.HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels)
 
     if hprotein.text_to_bool(args.run_training):
-        run_training(args, unique_id)
+        run_training(args, training_generator, val_generator)
 
     if hprotein.text_to_bool(args.run_eval):
-        run_eval(args, unique_id)
+        max_thresholds_matrix = run_eval(args, val_generator)
 
     if hprotein.text_to_bool(args.run_predict):
-        run_predict(args, unique_id)
+        run_predict(args, max_thresholds_matrix)
 
 
 # ---------------------------------
 # runs the train op
 # ---------------------------------
-def run_training(args, unique_id):
+def run_training(args, training_generator, val_generator):
 
     # Log start of training process
     logging.info('Starting run_training...')
 
-    # get data
-    specimen_ids, labels = hprotein.get_train_data(args.train_folder, args.label_folder)
-
-    # get training features and labels
-    #TODO: set up train/validation split regimen
-    train_set_sids = specimen_ids[0:3]
-    train_set_lbls = labels[0:3]
-
-    # get validation features and labels
-    val_set_sids = specimen_ids[3:]
-    val_set_lbls = labels[3:]
-
-    # create data generators
-    training_generator = hprotein.HproteinDataGenerator(args, train_set_sids, train_set_lbls)
-    val_generator = hprotein.HproteinDataGenerator(args, val_set_sids, val_set_lbls)
-
     # create checkpoint and learning rate modifier
-    checkpoint = ModelCheckpoint('./base.model', monitor='val_loss', verbose=1, save_best_only=True,
+    checkpoint = ModelCheckpoint('{}.model'.format(args.model_name),
+                                 monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
     reduceLROnPlato = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, verbose=1, mode='min')
 
@@ -123,24 +124,84 @@ def run_training(args, unique_id):
                                use_multiprocessing=False,
                                workers=1,
                                verbose=1,
-                               callbacks=[checkpoint])
+                               callbacks=[checkpoint,reduceLROnPlato])
+
 
 # ---------------------------------
 # runs the eval op
 # ---------------------------------
-def run_eval(args, unique_id):
+def run_eval(args, val_generator):
 
-    # Log start of training process
+    # Log start of eval process
     logging.info('Starting run_eval...')
+
+    # loading model
+    final_model = load_model('{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+
+    # create empty arrays to receive the predictions and  labels
+    val_predictions = np.empty((0, 28))
+    val_labels = np.empty((0, 28))
+
+    # loop through the validation data and make predictions
+    for i in range(len(val_generator)):
+        image, label = val_generator[i]
+        scores = final_model.predict(image)
+        val_predictions = np.append(val_predictions, scores, axis=0)
+        val_labels = np.append(val_labels, label, axis=0)
+
+    max_fscore_thresholds = hprotein.get_max_fscore_matrix(val_predictions, val_labels)
+
+    return max_fscore_thresholds
 
 
 # ---------------------------------
 # runs the predict op
 # ---------------------------------
-def run_predict(args, unique_id):
+def run_predict(args, max_thresholds_matrix):
 
-    # Log start of training process
+    # Log start of predict process
     logging.info('Starting run_predict...')
+
+    # loading model
+    logging.info('Loading model {} ...'.format(args.model_name))
+    final_model = load_model('{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+
+    # get predict data
+    logging.info('Reading predict test set from {} ...'.format(args.predict_folder))
+    predict_set_sids, predict_set_lbls = hprotein.get_predict_data(args.predict_folder, args.submission_folder)
+    predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls)
+
+    # generate predictions
+    logging.info('Starting prediction run...')
+    predictions = np.zeros((predict_set_sids.shape[0], 28))
+    for i in range(len(predict_generator)):
+        logging.info('Getting prediction batch #{}'.format(i+1))
+        images, labels = predict_generator[i]
+        score = final_model.predict(images)
+        predictions[i * args.batch_size : i * args.batch_size + score.shape[0]] = score
+
+    # get the list of submission specimen ids required
+    submit_data = pd.read_csv(args.submission_folder + '/sample_submission.csv')
+
+    # get the subset of labels that match the specimen images that are on TEST_PATH
+    submit_data = submit_data.loc[submit_data['Id'].isin(predict_set_sids)]
+    tmp_sid_list = submit_data['Id'].values
+
+    prediction_str = []
+
+    logging.info('Reformatting predictions and generating submission format...')
+    for i in range(predictions.shape[0]):
+        logging.info('Writing prediction #{} for specimen_id: {}'.format(i+1, tmp_sid_list[i]))
+        submit_str = ' '
+        for j in range(predictions.shape[1]):
+            if predictions[i, j] >= max_thresholds_matrix[j]:
+                submit_str += str(j) + ' '
+
+        prediction_str.append(submit_str)
+
+    submit_data['Predicted'] = np.array(prediction_str)
+
+    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
 
 
 # ---------------------------------
