@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="True" \
+    --run_training="False" \
     --batch_size=128 \
-    --epochs=10 \
+    --epochs=100 \
+    --gpu_count=8 \
     --run_eval="True" \
-    --validation_steps=128 \
-    --validation_split=0.1 \
+    --validation_steps=24 \
+    --validation_split=3072 \
     --run_predict="True" \
-    --new_model="True" \
-    --model_name="model" \
+    --new_model="False" \
+    --model_name="model_365690" \
     --model_folder="model" \
     --train_folder="stage1_train" \
     --label_folder="stage1_labels/train.csv" \

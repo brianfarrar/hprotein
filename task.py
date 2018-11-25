@@ -10,6 +10,7 @@ import hprotein
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 from keras.optimizers import Adam
 from keras.models import load_model
+from keras.utils import multi_gpu_model
 
 
 # -------------------------------------------------------------
@@ -28,13 +29,16 @@ def run(argv=None):
     parser.add_argument('--epochs', dest='epochs', default=10, type=int,
                         help='Number of epochs')
 
+    parser.add_argument('--gpu_count', dest='gpu_count', default=1, type=int,
+                        help='Number of epochs')
+
     parser.add_argument('--run_eval', dest='run_eval', default='True',
                         help='Text boolean to decide whether to run eval')
 
     parser.add_argument('--validation_steps', dest='validation_steps', default=10, type=int,
                         help='Number of validation_steps')
 
-    parser.add_argument('--validation_split', dest='validation_split', default=0.1, type=float,
+    parser.add_argument('--validation_split', dest='validation_split', default=3000, type=int,
                         help='Number of validation_steps')
 
     parser.add_argument('--run_predict', dest='run_predict', default='True',
@@ -76,6 +80,7 @@ def run(argv=None):
         unique_id = args.model_name.split('_')[-1]
 
     # get data and create train/test split
+
     train_specimen_ids, \
     val_specimen_ids, \
     train_labels, \
@@ -113,7 +118,11 @@ def run_training(args, training_generator, val_generator):
 
     # create the model
     model = hprotein.create_model(hprotein.SHAPE)
+    if args.gpu_count > 1:
+        model = multi_gpu_model(model, gpus=args.gpu_count)
+
     model.compile(loss='binary_crossentropy', optimizer=Adam(1e-03), metrics=['acc', hprotein.f1])
+
     model.summary()
 
     hist = model.fit_generator(training_generator,
@@ -121,8 +130,9 @@ def run_training(args, training_generator, val_generator):
                                validation_data=val_generator,
                                validation_steps=args.validation_steps,
                                epochs=args.epochs,
-                               use_multiprocessing=False,
-                               workers=1,
+                               use_multiprocessing=True,
+                               max_queue_size=128,
+                               workers=16,
                                verbose=1,
                                callbacks=[checkpoint,reduceLROnPlato])
 
@@ -145,11 +155,13 @@ def run_eval(args, val_generator):
     # loop through the validation data and make predictions
     for i in range(len(val_generator)):
         image, label = val_generator[i]
-        scores = final_model.predict(image)
+        scores = final_model.predict(image, batch_size=8)  # batch size reduced to avoid OOM issue
         val_predictions = np.append(val_predictions, scores, axis=0)
         val_labels = np.append(val_labels, label, axis=0)
 
     max_fscore_thresholds = hprotein.get_max_fscore_matrix(val_predictions, val_labels)
+
+    logging.info("Finished evaluation...")
 
     return max_fscore_thresholds
 
@@ -163,13 +175,16 @@ def run_predict(args, max_thresholds_matrix):
     logging.info('Starting run_predict...')
 
     # loading model
-    logging.info('Loading model {} ...'.format(args.model_name))
+    logging.info('Loading model {}...'.format(args.model_name))
     final_model = load_model('{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
 
     # get predict data
-    logging.info('Reading predict test set from {} ...'.format(args.predict_folder))
+    logging.info('Reading predict test set from {}...'.format(args.predict_folder))
     predict_set_sids, predict_set_lbls = hprotein.get_predict_data(args.predict_folder, args.submission_folder)
+    logging.info('Predict rows -> {}'.format(len(predict_set_sids)))
+    args.batch_size = 2
     predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls)
+    logging.info('Predict batches -> {}'.format(len(predict_generator)))
 
     # generate predictions
     logging.info('Starting prediction run...')
@@ -177,7 +192,9 @@ def run_predict(args, max_thresholds_matrix):
     for i in range(len(predict_generator)):
         logging.info('Getting prediction batch #{}'.format(i+1))
         images, labels = predict_generator[i]
-        score = final_model.predict(images)
+        logging.info('Image Count -> {}'.format(len(images)))
+        logging.info('Label Count -> {}'.format(len(labels)))
+        score = final_model.predict(images, batch_size=args.batch_size)
         predictions[i * args.batch_size : i * args.batch_size + score.shape[0]] = score
 
     # get the list of submission specimen ids required
@@ -190,6 +207,7 @@ def run_predict(args, max_thresholds_matrix):
     prediction_str = []
 
     logging.info('Reformatting predictions and generating submission format...')
+
     for i in range(predictions.shape[0]):
         logging.info('Writing prediction #{} for specimen_id: {}'.format(i+1, tmp_sid_list[i]))
         submit_str = ' '
@@ -197,11 +215,13 @@ def run_predict(args, max_thresholds_matrix):
             if predictions[i, j] >= max_thresholds_matrix[j]:
                 submit_str += str(j) + ' '
 
-        prediction_str.append(submit_str)
+        prediction_str.append(submit_str.strip())
 
     submit_data['Predicted'] = np.array(prediction_str)
 
     submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
+
+    logging.info('Prediction run complete!')
 
 
 # ---------------------------------

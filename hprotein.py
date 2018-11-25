@@ -22,7 +22,8 @@ from sklearn.model_selection import train_test_split
 
 # constants
 COLORS = ['red','green', 'blue', 'yellow']
-SHAPE = (192, 192, 4)
+#SHAPE = (192, 192, 4)
+SHAPE = (512, 512, 4)
 THRESHOLD = 0.05
 SEED = 42
 
@@ -93,7 +94,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  augment=False):
 
         self.args = args
-        self.path=path
+        self.path = path
         self.specimen_ids = specimen_ids  # list of features
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
@@ -229,14 +230,14 @@ def get_predict_data(test_path, output_path):
 # -----------------------------
 # get train/test split
 # -----------------------------
-def get_train_test_split(args, test_size=0.1):
+def get_train_test_split(args, test_size=3072):
 
     logging.info('Loading datasets from {} and {} ...'.format(args.train_folder, args.label_folder))
     specimen_ids, labels = get_data(args.train_folder, args.label_folder)
 
-    logging.info('Creating train|test split of {}|{}'.format(1-test_size, test_size))
     train_set_sids, val_set_sids, \
     train_set_lbls, val_set_lbls = train_test_split(specimen_ids, labels, test_size=test_size, random_state=SEED)
+    logging.info('Created train|test split of {}|{}'.format(len(train_set_lbls), len(val_set_lbls)))
 
     return train_set_sids, val_set_sids, train_set_lbls, val_set_lbls
 
