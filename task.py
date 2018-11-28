@@ -88,7 +88,7 @@ def run(argv=None):
 
     # create data generators
     logging.info('Creating Hprotein training data generator...')
-    training_generator = hprotein.HproteinDataGenerator(args, args.train_folder, train_specimen_ids, train_labels)
+    training_generator = hprotein.HproteinDataGenerator(args, args.train_folder, train_specimen_ids, train_labels, shuffle=True)
     logging.info('Creating Hprotein validation data generator...')
     val_generator = hprotein.HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels)
 
@@ -114,7 +114,7 @@ def run_training(args, training_generator, val_generator):
     checkpoint = ModelCheckpoint('{}.model'.format(args.model_name),
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
-    reduceLROnPlato = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, verbose=1, mode='min')
+    reduce_learning_rate = ReduceLROnPlateau(monitor='val_loss', factor=0.75, patience=3, verbose=1, mode='min')
 
     # create the model
     model = hprotein.create_model(hprotein.SHAPE)
@@ -134,7 +134,7 @@ def run_training(args, training_generator, val_generator):
                                max_queue_size=128,
                                workers=16,
                                verbose=1,
-                               callbacks=[checkpoint,reduceLROnPlato])
+                               callbacks=[checkpoint,reduce_learning_rate])
 
 
 # ---------------------------------
@@ -161,6 +161,13 @@ def run_eval(args, val_generator):
 
     max_fscore_thresholds = hprotein.get_max_fscore_matrix(val_predictions, val_labels)
 
+    # write out the submission csv
+    #hprotein.write_eval_csv(args,
+    #                        val_generator.specimen_ids,
+    #                        val_predictions,
+    #                        val_labels,
+    #                        max_fscore_thresholds)
+
     logging.info("Finished evaluation...")
 
     return max_fscore_thresholds
@@ -181,47 +188,32 @@ def run_predict(args, max_thresholds_matrix):
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
     predict_set_sids, predict_set_lbls = hprotein.get_predict_data(args.predict_folder, args.submission_folder)
-    logging.info('Predict rows -> {}'.format(len(predict_set_sids)))
-    args.batch_size = 2
+    args.batch_size = 8
     predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls)
-    logging.info('Predict batches -> {}'.format(len(predict_generator)))
 
     # generate predictions
     logging.info('Starting prediction run...')
-    predictions = np.zeros((predict_set_sids.shape[0], 28))
+
     for i in range(len(predict_generator)):
         logging.info('Getting prediction batch #{}'.format(i+1))
         images, labels = predict_generator[i]
-        logging.info('Image Count -> {}'.format(len(images)))
-        logging.info('Label Count -> {}'.format(len(labels)))
-        score = final_model.predict(images, batch_size=args.batch_size)
-        predictions[i * args.batch_size : i * args.batch_size + score.shape[0]] = score
 
-    # get the list of submission specimen ids required
-    submit_data = pd.read_csv(args.submission_folder + '/sample_submission.csv')
+        # if the last batch is not full append blank rows
+        if images.shape[0] < predict_generator.batch_size:
+            blank_rows = np.zeros((predict_generator.last_batch_padding,
+                                   predict_generator.shape[0],
+                                   predict_generator.shape[1],
+                                   predict_generator.shape[2]))
+            images = np.append(images, blank_rows, axis=0)
 
-    # get the subset of labels that match the specimen images that are on TEST_PATH
-    submit_data = submit_data.loc[submit_data['Id'].isin(predict_set_sids)]
-    tmp_sid_list = submit_data['Id'].values
+        score = final_model.predict(images, batch_size=predict_generator.batch_size)
+        predictions = np.zeros((predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
+        predictions[i * predict_generator.batch_size : i * predict_generator.batch_size + images.shape[0]] = score
 
-    prediction_str = []
+    # write out the submission csv
+    hprotein.write_submission_csv(args, predict_set_sids, predictions, predict_generator.last_batch_padding, max_thresholds_matrix)
 
-    logging.info('Reformatting predictions and generating submission format...')
-
-    for i in range(predictions.shape[0]):
-        logging.info('Writing prediction #{} for specimen_id: {}'.format(i+1, tmp_sid_list[i]))
-        submit_str = ' '
-        for j in range(predictions.shape[1]):
-            if predictions[i, j] >= max_thresholds_matrix[j]:
-                submit_str += str(j) + ' '
-
-        prediction_str.append(submit_str.strip())
-
-    submit_data['Predicted'] = np.array(prediction_str)
-
-    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
-
-    logging.info('Prediction run complete!')
+    logging.info('Model: {} prediction run complete!'.format(args.model_name))
 
 
 # ---------------------------------

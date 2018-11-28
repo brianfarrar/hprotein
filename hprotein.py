@@ -4,6 +4,7 @@ import distutils.util
 import cv2
 import numpy as np
 import pandas as pd
+import random
 
 import tensorflow as tf
 from tensorflow.python.lib.io import file_io
@@ -22,8 +23,9 @@ from sklearn.model_selection import train_test_split
 
 # constants
 COLORS = ['red','green', 'blue', 'yellow']
-#SHAPE = (192, 192, 4)
-SHAPE = (512, 512, 4)
+IMAGE_SIZE = 512
+CROP_SIZE = 256
+SHAPE = (CROP_SIZE, CROP_SIZE, 4)
 THRESHOLD = 0.05
 SEED = 42
 
@@ -88,6 +90,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  path,
                  specimen_ids,
                  labels,
+                 image_size=IMAGE_SIZE,
+                 crop_size=CROP_SIZE,
                  shape=SHAPE,
                  shuffle=False,
                  use_cache=False,
@@ -98,6 +102,9 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.specimen_ids = specimen_ids  # list of features
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
+        self.last_batch_padding = 0            # amount to pad the last batch to make it complete
+        self.image_size = image_size
+        self.crop_size = crop_size
         self.shape = shape  # shape of features
         self.shuffle = shuffle  # boolean for shuffle
         self.use_cache = use_cache  # boolean for use of cache
@@ -107,7 +114,20 @@ class HproteinDataGenerator(keras.utils.Sequence):
     # Required function to determine the number of batches
     # -------------------------------------------------------
     def __len__(self):
-        return int(np.ceil(len(self.specimen_ids) / float(self.batch_size)))
+
+        # get the number of examples to generate
+        example_count = len(self.specimen_ids)
+
+        # calculate the number of batches
+        batch_count = int(np.ceil(example_count / float(self.batch_size)))
+
+        # get the size of the last batch
+        last_batch_size = example_count - ((batch_count - 1) * self.batch_size)
+
+        # set the amount to pad the last batch
+        self.last_batch_padding = self.batch_size - last_batch_size
+
+        return batch_count
 
     # -------------------------------------------------------
     # Required function to get a batch
@@ -123,12 +143,9 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # load a batch of labels
         label_batch = self.labels[self.batch_size * index:self.batch_size * (index + 1)]
 
-        # load a batch of images
-        if self.use_cache:
-            print("Error: use_cache not implemented!")
-        else:
-            for i, specimen_id in enumerate(specimen_ids):
-                feature_batch[i] = self.get_stacked_image(specimen_id)
+        # load the batch with images and crop
+        for i, specimen_id in enumerate(specimen_ids):
+            feature_batch[i] = self.get_stacked_image(specimen_id)
 
         # augment images if desired
         if self.augment:
@@ -147,8 +164,6 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
-        image = cv2.resize(image, (self.shape[0], self.shape[1]))
-
         return image
 
     # -----------------------------------------
@@ -157,7 +172,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
     def get_stacked_image(self, specimen_id, lo_res=True):
 
         # create a numpy array to place the 1-channel images into
-        image = np.zeros((self.shape[0], self.shape[1], 4), dtype=np.uint8)
+        image = np.zeros((self.image_size, self.image_size, 4))
 
         for n, color in enumerate(COLORS):
             # get a single image
@@ -166,7 +181,26 @@ class HproteinDataGenerator(keras.utils.Sequence):
             # store it a channel
             image[:, :, n] = i
 
-        return image
+        crop = self.random_crop(image, crop_size=self.crop_size)
+
+        crop = np.divide(crop, 255)
+
+
+        return crop
+
+    # --------------------------------------------------
+    # crops an image to crop_size from a random origin
+    # --------------------------------------------------
+    def random_crop(self, image, crop_size=256, original_size=512):
+
+        # get a pair of random coordinates that will provide for an image of crop_size
+        x_origin = random.randint(0, original_size - crop_size)
+        y_origin = random.randint(0, original_size - crop_size)
+
+        # crop the image
+        crop = image[x_origin: x_origin + crop_size, y_origin: y_origin + crop_size, :]
+
+        return crop
 
 
 # -----------------------------------------------------------
@@ -337,6 +371,9 @@ def create_model(input_shape):
     return model
 
 
+# ----------------------------------------------------
+# Gets a matrix of thresholds that maximizes fscore
+# ----------------------------------------------------
 def get_max_fscore_matrix(val_predictions, val_labels):
 
     # get a range between 0 and 1 by 1000ths
@@ -366,3 +403,62 @@ def get_max_fscore_matrix(val_predictions, val_labels):
     logging.info(max_fscore_thresholds)
 
     return max_fscore_thresholds
+
+
+# ----------------------------------------------
+# writes out a submission file
+# ----------------------------------------------
+def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding, max_thresholds_matrix):
+
+    # get the list of submission specimen ids required
+    submit_data = pd.read_csv(args.submission_folder + '/sample_submission.csv')
+
+    # get the subset of labels that match the specimen images that are on TEST_PATH
+    submit_data = submit_data.loc[submit_data['Id'].isin(predict_set_sids)]
+    tmp_sid_list = submit_data['Id'].values
+
+    logging.info('Reformatting predictions and generating submission format...')
+
+    # set up a list to receive the predictions in string form
+    prediction_str = []
+
+    # eliminate padding from end of prediction
+    predictions = predictions[:predictions.shape[0] - last_batch_padding, :]
+
+    # loop through predictions and generate the prediction string
+    for i in range(predictions.shape[0]):
+        logging.info('Writing prediction #{} for specimen_id: {}'.format(i+1, tmp_sid_list[i]))
+        submit_str = ' '
+        for j in range(predictions.shape[1]):
+            if predictions[i, j] >= max_thresholds_matrix[j]:
+                submit_str += str(j) + ' '
+
+        prediction_str.append(submit_str.strip())
+
+    submit_data['Predicted'] = np.array(prediction_str)
+
+    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
+
+
+def write_eval_csv(args, val_specimen_ids, val_predictions, val_labels, max_fscore_thresholds):
+
+    # get the labels for all specimen_ids
+    label_data = pd.read_csv(args.label_path)
+
+    # get the subset of labels that match the specimen images that are on TRAIN_PATH
+    labels_subset = label_data.loc[label_data['Id'].isin(val_specimen_ids)]
+
+    # set up a list to receive the predictions in string form
+    val_predictions_str = []
+
+    # loop through predictions and generate the prediction string
+    for i in range(val_predictions.shape[0]):
+        logging.info('Writing eval prediction #{} for specimen_id: {}'.format(i + 1, val_specimen_ids[i]))
+        submit_str = ' '
+        for j in range(val_predictions.shape[1]):
+            if val_predictions[i, j] >= max_fscore_thresholds[j]:
+                submit_str += str(j) + ' '
+
+        val_predictions_str.append(submit_str.strip())
+
+    # create dataframe and save to csv
