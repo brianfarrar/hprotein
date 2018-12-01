@@ -11,10 +11,13 @@ from tensorflow.python.lib.io import file_io
 
 import keras
 from keras import backend as K
-from keras.layers import Activation, Dropout, Flatten, Dense, Input, Conv2D, MaxPooling2D, BatchNormalization, Concatenate, ReLU, LeakyReLU
+from keras.activations import selu
+from keras.layers import Activation, Dropout, Flatten, Dense, Input, Conv2D, MaxPooling2D, BatchNormalization, \
+                         Concatenate, ReLU, LeakyReLU, GlobalAveragePooling2D
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 from keras.preprocessing.image import ImageDataGenerator
 from keras.models import Sequential, load_model, Model
+from keras.layers.noise import AlphaDropout
 
 from sklearn.metrics import f1_score
 
@@ -28,6 +31,7 @@ CROP_SIZE = 256
 SHAPE = (CROP_SIZE, CROP_SIZE, 4)
 THRESHOLD = 0.05
 SEED = 42
+
 
 # -------------------------------------------------------------
 # Converts a text based "True" or "False" to a python bool
@@ -90,7 +94,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  path,
                  specimen_ids,
                  labels,
-                 image_size=IMAGE_SIZE,
+                 image_size=CROP_SIZE,
                  crop_size=CROP_SIZE,
                  shape=SHAPE,
                  shuffle=False,
@@ -164,6 +168,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
+        image = cv2.resize(image, (self.crop_size, self.crop_size))
+
         return image
 
     # -----------------------------------------
@@ -181,12 +187,12 @@ class HproteinDataGenerator(keras.utils.Sequence):
             # store it a channel
             image[:, :, n] = i
 
-        crop = self.random_crop(image, crop_size=self.crop_size)
+        #crop = self.random_crop(image, crop_size=self.crop_size)
+        #crop = np.divide(crop, 255)
 
-        crop = np.divide(crop, 255)
+        image = np.divide(image, 255.)
 
-
-        return crop
+        return image
 
     # --------------------------------------------------
     # crops an image to crop_size from a random origin
@@ -309,62 +315,152 @@ def f1_loss(y_true, y_pred):
 # ------------------------------
 # create the model
 # ------------------------------
-def create_model(input_shape):
-
-    dropRate = 0.25
+def create_model(input_shape, model_name='basic_cnn'):
 
     init = Input(input_shape)
-    x = BatchNormalization(axis=-1)(init)
-    x = Conv2D(8, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = Conv2D(8, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = Conv2D(16, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(dropRate)(x)
-    c1 = Conv2D(16, (3, 3), padding='same')(x)
-    c1 = ReLU()(c1)
-    c2 = Conv2D(16, (5, 5), padding='same')(x)
-    c2 = ReLU()(c2)
-    c3 = Conv2D(16, (7, 7), padding='same')(x)
-    c3 = ReLU()(c3)
-    c4 = Conv2D(16, (1, 1), padding='same')(x)
-    c4 = ReLU()(c4)
-    x = Concatenate()([c1, c2, c3, c4])
-    x = BatchNormalization(axis=-1)(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(dropRate)(x)
-    x = Conv2D(32, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(dropRate)(x)
-    x = Conv2D(64, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(dropRate)(x)
-    x = Conv2D(128, (3, 3))(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(dropRate)(x)
-    # x = Conv2D(256, (1, 1), activation='relu')(x)
-    # x = BatchNormalization(axis=-1)(x)
-    # x = MaxPooling2D(pool_size=(2, 2))(x)
-    # x = Dropout(0.25)(x)
-    x = Flatten()(x)
-    x = Dropout(0.5)(x)
-    x = Dense(28)(x)
-    x = ReLU()(x)
-    x = BatchNormalization(axis=-1)(x)
-    x = Dropout(0.1)(x)
-    x = Dense(28)(x)
-    x = Activation('sigmoid')(x)
+
+    if model_name == 'basic_cnn':
+
+        drop_rate = 0.25
+
+        x = BatchNormalization(axis=-1)(init)
+        x = Conv2D(8, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(8, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(16, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(drop_rate)(x)
+        c1 = Conv2D(16, (3, 3), padding='same')(x)
+        c1 = ReLU()(c1)
+        c2 = Conv2D(16, (5, 5), padding='same')(x)
+        c2 = ReLU()(c2)
+        c3 = Conv2D(16, (7, 7), padding='same')(x)
+        c3 = ReLU()(c3)
+        c4 = Conv2D(16, (1, 1), padding='same')(x)
+        c4 = ReLU()(c4)
+        x = Concatenate()([c1, c2, c3, c4])
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(drop_rate)(x)
+        x = Conv2D(32, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(drop_rate)(x)
+        x = Conv2D(64, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(drop_rate)(x)
+        x = Conv2D(128, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(drop_rate)(x)
+        # x = Conv2D(256, (1, 1), activation='relu')(x)
+        # x = BatchNormalization(axis=-1)(x)
+        # x = MaxPooling2D(pool_size=(2, 2))(x)
+        # x = Dropout(0.25)(x)
+        x = Flatten()(x)
+        x = Dropout(0.5)(x)
+        x = Dense(28)(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Dropout(0.1)(x)
+        x = Dense(28)(x)
+        x = Activation('sigmoid')(x)
+
+    elif model_name == 'gap_net_selu':
+
+        drop_rate = 0.30
+
+        x = Conv2D(32, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(init)
+        x = Conv2D(32, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
+        gap_input1 = AlphaDropout(drop_rate)(x)
+
+        x = Conv2D(64, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
+        gap_input2 = AlphaDropout(drop_rate)(x)
+
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        gap_input3 = AlphaDropout(drop_rate)(x)
+
+        gap1 = GlobalAveragePooling2D()(gap_input1)
+        gap2 = GlobalAveragePooling2D()(gap_input2)
+        gap3 = GlobalAveragePooling2D()(gap_input3)
+
+        x = Concatenate()([gap1, gap2, gap3])
+
+        x = Dense(256, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = AlphaDropout(drop_rate)(x)
+        x = Dense(256, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = AlphaDropout(drop_rate)(x)
+        x = Dense(28, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Activation('sigmoid')(x)
+
+    elif model_name == 'gap_net_bn_relu':
+
+        dropRate = 0.25
+
+        x = BatchNormalization(axis=-1)(init)
+        x = Conv2D(32, (3, 3))(x)  # , strides=(2,2))(x)
+        x = ReLU()(x)
+
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        ginp1 = Dropout(dropRate)(x)
+
+        x = BatchNormalization(axis=-1)(ginp1)
+        x = Conv2D(64, (3, 3), strides=(2, 2))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(64, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(64, (3, 3))(x)
+        x = ReLU()(x)
+
+        x = BatchNormalization(axis=-1)(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        ginp2 = Dropout(dropRate)(x)
+
+        x = BatchNormalization(axis=-1)(ginp2)
+        x = Conv2D(128, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(128, (3, 3))(x)
+        x = ReLU()(x)
+        x = BatchNormalization(axis=-1)(x)
+        x = Conv2D(128, (3, 3))(x)
+        x = ReLU()(x)
+        ginp3 = Dropout(dropRate)(x)
+
+        gap1 = GlobalAveragePooling2D()(ginp1)
+        gap2 = GlobalAveragePooling2D()(ginp2)
+        gap3 = GlobalAveragePooling2D()(ginp3)
+
+        x = Concatenate()([gap1, gap2, gap3])
+
+        x = BatchNormalization(axis=-1)(x)
+        x = Dense(256, activation='relu')(x)
+        x = Dropout(dropRate)(x)
+
+        x = BatchNormalization(axis=-1)(x)
+        x = Dense(256, activation='relu')(x)
+        x = Dropout(0.1)(x)
+
+        x = Dense(28)(x)
+        x = Activation('sigmoid')(x)
 
     model = Model(init, x)
 
@@ -440,10 +536,10 @@ def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding
     submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
 
 
-def write_eval_csv(args, val_specimen_ids, val_predictions, val_labels, max_fscore_thresholds):
+def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds):
 
     # get the labels for all specimen_ids
-    label_data = pd.read_csv(args.label_path)
+    label_data = pd.read_csv(args.label_folder)
 
     # get the subset of labels that match the specimen images that are on TRAIN_PATH
     labels_subset = label_data.loc[label_data['Id'].isin(val_specimen_ids)]
@@ -462,3 +558,9 @@ def write_eval_csv(args, val_specimen_ids, val_predictions, val_labels, max_fsco
         val_predictions_str.append(submit_str.strip())
 
     # create dataframe and save to csv
+    eval_output = pd.DataFrame()
+    eval_output['Id'] = val_specimen_ids
+    eval_output['Ground_Truth'] = label_data['Target']
+    eval_output['Predictions'] = np.array(val_predictions_str)
+
+    eval_output.to_csv(args.submission_folder + '/eval_{}.csv'.format(args.model_name), index=False)

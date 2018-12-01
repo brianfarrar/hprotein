@@ -7,6 +7,7 @@ import uuid
 import numpy as np
 import pandas as pd
 import hprotein
+
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 from keras.optimizers import Adam
 from keras.models import load_model
@@ -96,7 +97,7 @@ def run(argv=None):
         run_training(args, training_generator, val_generator)
 
     if hprotein.text_to_bool(args.run_eval):
-        max_thresholds_matrix = run_eval(args, val_generator)
+        max_thresholds_matrix = run_eval(args, val_generator, val_specimen_ids)
 
     if hprotein.text_to_bool(args.run_predict):
         run_predict(args, max_thresholds_matrix)
@@ -117,7 +118,7 @@ def run_training(args, training_generator, val_generator):
     reduce_learning_rate = ReduceLROnPlateau(monitor='val_loss', factor=0.75, patience=3, verbose=1, mode='min')
 
     # create the model
-    model = hprotein.create_model(hprotein.SHAPE)
+    model = hprotein.create_model(hprotein.SHAPE, model_name='gap_net_selu')
     if args.gpu_count > 1:
         model = multi_gpu_model(model, gpus=args.gpu_count)
 
@@ -140,7 +141,7 @@ def run_training(args, training_generator, val_generator):
 # ---------------------------------
 # runs the eval op
 # ---------------------------------
-def run_eval(args, val_generator):
+def run_eval(args, val_generator, val_specimen_ids):
 
     # Log start of eval process
     logging.info('Starting run_eval...')
@@ -162,11 +163,7 @@ def run_eval(args, val_generator):
     max_fscore_thresholds = hprotein.get_max_fscore_matrix(val_predictions, val_labels)
 
     # write out the submission csv
-    #hprotein.write_eval_csv(args,
-    #                        val_generator.specimen_ids,
-    #                        val_predictions,
-    #                        val_labels,
-    #                        max_fscore_thresholds)
+    hprotein.write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds)
 
     logging.info("Finished evaluation...")
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 python3 task.py \
     --run_training="True" \
-    --batch_size=128 \
-    --epochs=40 \
-    --gpu_count=8 \
+    --batch_size=32 \
+    --epochs=20 \
+    --gpu_count=1 \
     --run_eval="True" \
     --validation_steps=24 \
     --validation_split=3072 \
