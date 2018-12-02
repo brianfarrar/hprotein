@@ -21,17 +21,48 @@ from keras.layers.noise import AlphaDropout
 
 from sklearn.metrics import f1_score
 
-from sklearn.model_selection import train_test_split
+import imgaug as ia
+from imgaug import augmenters as iaa
+
 
 
 # constants
 COLORS = ['red','green', 'blue', 'yellow']
 IMAGE_SIZE = 512
-CROP_SIZE = 256
-SHAPE = (CROP_SIZE, CROP_SIZE, 4)
-THRESHOLD = 0.05
+SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 4)
+THRESHOLD = 0.5
 SEED = 42
 
+from tensorflow import set_random_seed
+set_random_seed(SEED)
+
+# ------------------------------------------------
+# mini train set for testing purposes
+# ------------------------------------------------
+mini_train_set = ['000c99ba-bba4-11e8-b2b9-ac1f6b6435d0',
+                  '001bcdd2-bbb2-11e8-b2ba-ac1f6b6435d0',
+                  '0020af02-bbba-11e8-b2ba-ac1f6b6435d0',
+                  'fb4c1fac-bbaa-11e8-b2ba-ac1f6b6435d0',
+                  'fc84a97c-bbad-11e8-b2ba-ac1f6b6435d0',
+                  'fea6e496-bbbb-11e8-b2ba-ac1f6b6435d0',
+                  'fffe0ffe-bbc0-11e8-b2bb-ac1f6b6435d0'
+]
+
+# ------------------------------------------------
+# mini validation set for testing purposes
+# ------------------------------------------------
+mini_validate_set = ['001838f8-bbca-11e8-b2bc-ac1f6b6435d0',
+                     '002daad6-bbc9-11e8-b2bc-ac1f6b6435d0',
+                     'ffeae6f0-bbc9-11e8-b2bc-ac1f6b6435d0'
+]
+
+# ------------------------------------------------
+# full validation set for testing purposes
+# ------------------------------------------------
+validation_set =['001838f8-bbca-11e8-b2bc-ac1f6b6435d0',
+                 '002daad6-bbc9-11e8-b2bc-ac1f6b6435d0',
+                 'ffeae6f0-bbc9-11e8-b2bc-ac1f6b6435d0'
+]
 
 # -------------------------------------------------------------
 # Converts a text based "True" or "False" to a python bool
@@ -94,8 +125,6 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  path,
                  specimen_ids,
                  labels,
-                 image_size=CROP_SIZE,
-                 crop_size=CROP_SIZE,
                  shape=SHAPE,
                  shuffle=False,
                  use_cache=False,
@@ -107,12 +136,11 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
         self.last_batch_padding = 0            # amount to pad the last batch to make it complete
-        self.image_size = image_size
-        self.crop_size = crop_size
         self.shape = shape  # shape of features
         self.shuffle = shuffle  # boolean for shuffle
-        self.use_cache = use_cache  # boolean for use of cache
         self.augment = augment  # boolean for image augmentation
+
+        ia.seed(SEED)
 
     # -------------------------------------------------------
     # Required function to determine the number of batches
@@ -151,10 +179,6 @@ class HproteinDataGenerator(keras.utils.Sequence):
         for i, specimen_id in enumerate(specimen_ids):
             feature_batch[i] = self.get_stacked_image(specimen_id)
 
-        # augment images if desired
-        if self.augment:
-            print("Error: Image augmentation not implemented!")
-
         return feature_batch, label_batch
 
     # -----------------------------------------
@@ -168,8 +192,6 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
-        image = cv2.resize(image, (self.crop_size, self.crop_size))
-
         return image
 
     # -----------------------------------------
@@ -178,7 +200,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
     def get_stacked_image(self, specimen_id, lo_res=True):
 
         # create a numpy array to place the 1-channel images into
-        image = np.zeros((self.image_size, self.image_size, 4))
+        image = np.zeros((self.shape))
 
         for n, color in enumerate(COLORS):
             # get a single image
@@ -187,99 +209,99 @@ class HproteinDataGenerator(keras.utils.Sequence):
             # store it a channel
             image[:, :, n] = i
 
-        #crop = self.random_crop(image, crop_size=self.crop_size)
-        #crop = np.divide(crop, 255)
+        # augment images if desired
+        if self.augment:
+            seq = iaa.Sequential([
+                iaa.Fliplr(1),  # horizontal flips
+                iaa.Flipud(1),  # horizontal flips
+                iaa.Crop(percent=(0, 0.1)),  # random crops
+                # Small gaussian blur with random sigma between 0 and 0.5.
+                # But we only blur about 50% of all images.
+                iaa.Sometimes(0.5, iaa.GaussianBlur(sigma=(0, 0.5))),
+                # Strengthen or weaken the contrast in each image.
+                iaa.ContrastNormalization((0.75, 1.5)),
+                # Add gaussian noise.
+                # For 50% of all images, we sample the noise once per pixel.
+                # For the other 50% of all images, we sample the noise per pixel AND
+                # channel. This can change the color (not only brightness) of the
+                # pixels.
+                iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05 * 255), per_channel=0.5),
+                # Make some images brighter and some darker.
+                # In 20% of all cases, we sample the multiplier once per channel,
+                # which can end up changing the color of the images.
+                iaa.Multiply((0.8, 1.2), per_channel=0.2),
+                # Apply affine transformations to each image.
+                # Scale/zoom them, translate/move them, rotate them and shear them.
+                iaa.Affine(
+                    scale={"x": (0.8, 1.2), "y": (0.8, 1.2)},
+                    translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)},
+                    rotate=(-25, 25),
+                    shear=(-8, 8)
+                )
+            ], random_order=True)  # apply augmenters in random order
+
+            # augment 25% of the time
+
+            if np.random.uniform() > 0.75:
+                image = seq.augment_image(image)
 
         image = np.divide(image, 255.)
 
         return image
 
-    # --------------------------------------------------
-    # crops an image to crop_size from a random origin
-    # --------------------------------------------------
-    def random_crop(self, image, crop_size=256, original_size=512):
-
-        # get a pair of random coordinates that will provide for an image of crop_size
-        x_origin = random.randint(0, original_size - crop_size)
-        y_origin = random.randint(0, original_size - crop_size)
-
-        # crop the image
-        crop = image[x_origin: x_origin + crop_size, y_origin: y_origin + crop_size, :]
-
-        return crop
-
 
 # -----------------------------------------------------------
 # get the available specimen ids and corresponding labels
 # -----------------------------------------------------------
-def get_data(train_path, label_path):
+def get_data(path, label_path, mode='train', filter_ids=None):
 
     # get the list of specimen ids
-    specimen_ids = get_specimen_ids(train_path)
+    specimen_ids = get_specimen_ids(path)
+
+    if mode is 'train':
+        specimen_ids = [specimen_id for specimen_id in specimen_ids if specimen_id not in filter_ids]
+    elif mode in ['validate', 'mini-train', 'mini-validate']:
+        specimen_ids = [item for item in specimen_ids if item in filter_ids]
+    elif mode is 'test':
+        pass
+    else:
+        logging.warning('Invalid mode {} specified'.format(mode))
 
     # get the labels for all specimen_ids
     label_data = pd.read_csv(label_path)
 
-    # get the subset of labels that match the specimen images that are on TRAIN_PATH
+    # get the subset of labels that match the specimen images that are in the set of interest
     labels_subset = label_data.loc[label_data['Id'].isin(specimen_ids)]
 
     #
-    # convert labels to trainer format
+    # if the mode is 'test' then create an empty label set, otherwise convert labels to trainer format
     #
 
-    # set up the list that will contain the list of encoded labels for each specimen id
-    labels = []
+    if mode is 'test':
+        # set up an array to receive predicted labels
+        labels = np.ones((len(specimen_ids), 28))
 
-    # loop through each specimen_id
-    for specimen_id in specimen_ids:
+    else:
 
-        # split the space separated multi-label into a list of individual labels
-        split_labels = (labels_subset.loc[labels_subset['Id'] == specimen_id])['Target'].str.split(' ')
+        # set up the list that will contain the list of encoded labels for each specimen id
+        labels = []
 
-        # set up a numpy array to receive the encoded label
-        l = np.zeros(28, dtype=np.uint8)
+        # loop through each specimen_id
+        for specimen_id in specimen_ids:
 
-        # turn on the positive columns in the labels array
-        for label in split_labels:
-            l[np.uint8(label)] = 1
+            # split the space separated multi-label into a list of individual labels
+            split_labels = (labels_subset.loc[labels_subset['Id'] == specimen_id])['Target'].str.split(' ')
 
-        labels.append(l)
+            # set up a numpy array to receive the encoded label
+            l = np.zeros(28)
+
+            # turn on the positive columns in the labels array
+            for label in split_labels:
+                l[np.uint8(label)] = 1
+
+            labels.append(l)
 
     return np.array(specimen_ids), np.array(labels)
-
-
-# -----------------------------------------------------------
-# get the specimen ids to predict
-# -----------------------------------------------------------
-def get_predict_data(test_path, output_path):
-    # get the list of specimen ids for which there are images
-    specimen_ids = get_specimen_ids(test_path)
-
-    # get the list of submission specimen ids required
-    submit_data = pd.read_csv(output_path + '/sample_submission.csv')
-
-    # get the subset of labels that match the specimen images that are on TEST_PATH
-    submit_subset = submit_data.loc[submit_data['Id'].isin(specimen_ids)]
-
-    # set up the list that will contain the list of encoded labels for each specimen id
-    predicted_labels = np.zeros((len(specimen_ids), 28), dtype=np.uint8)
-
-    return np.array(specimen_ids), predicted_labels
-
-
-# -----------------------------
-# get train/test split
-# -----------------------------
-def get_train_test_split(args, test_size=3072):
-
-    logging.info('Loading datasets from {} and {} ...'.format(args.train_folder, args.label_folder))
-    specimen_ids, labels = get_data(args.train_folder, args.label_folder)
-
-    train_set_sids, val_set_sids, \
-    train_set_lbls, val_set_lbls = train_test_split(specimen_ids, labels, test_size=test_size, random_state=SEED)
-    logging.info('Created train|test split of {}|{}'.format(len(train_set_lbls), len(val_set_lbls)))
-
-    return train_set_sids, val_set_sids, train_set_lbls, val_set_lbls
 
 
 # --------------------------------
@@ -287,7 +309,7 @@ def get_train_test_split(args, test_size=3072):
 # --------------------------------
 def f1(y_true, y_pred):
 
-    y_pred = K.cast(K.greater(K.clip(y_pred, 0, 1), THRESHOLD), K.floatx())
+    # y_pred = K.cast(K.greater(K.clip(y_pred, 0, 1), THRESHOLD), K.floatx())
     tp = K.sum(K.cast(y_true * y_pred, 'float'), axis=0)
     tn = K.sum(K.cast((1 - y_true) * (1 - y_pred), 'float'), axis=0)
     fp = K.sum(K.cast((1 - y_true) * y_pred, 'float'), axis=0)
@@ -377,22 +399,21 @@ def create_model(input_shape, model_name='basic_cnn'):
 
     elif model_name == 'gap_net_selu':
 
-        drop_rate = 0.30
+        drop_rate = 0.25
 
-        x = Conv2D(32, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(init)
-        x = Conv2D(32, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(32, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(init)
         x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
         gap_input1 = AlphaDropout(drop_rate)(x)
 
-        x = Conv2D(64, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal')(x)
-        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
-        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(64, (3, 3), strides=(2, 2), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
+        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
+        x = Conv2D(64, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         x = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(x)
         gap_input2 = AlphaDropout(drop_rate)(x)
 
-        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
-        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
-        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
+        x = Conv2D(128, (3, 3), strides=(1, 1), activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         gap_input3 = AlphaDropout(drop_rate)(x)
 
         gap1 = GlobalAveragePooling2D()(gap_input1)
@@ -401,11 +422,11 @@ def create_model(input_shape, model_name='basic_cnn'):
 
         x = Concatenate()([gap1, gap2, gap3])
 
-        x = Dense(256, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Dense(256, activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         x = AlphaDropout(drop_rate)(x)
-        x = Dense(256, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Dense(256, activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         x = AlphaDropout(drop_rate)(x)
-        x = Dense(28, activation=selu, kernel_initializer='lecun_normal')(x)
+        x = Dense(28, activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         x = Activation('sigmoid')(x)
 
     elif model_name == 'gap_net_bn_relu':
@@ -470,7 +491,18 @@ def create_model(input_shape, model_name='basic_cnn'):
 # ----------------------------------------------------
 # Gets a matrix of thresholds that maximizes fscore
 # ----------------------------------------------------
-def get_max_fscore_matrix(val_predictions, val_labels):
+def get_max_fscore_matrix(model, val_generator, save_eval=False):
+
+    # create empty arrays to receive the predictions and labels
+    val_predictions = np.empty((0, 28))
+    val_labels = np.empty((0, 28))
+
+    # loop through the validation data and make predictions
+    for i in range(len(val_generator)):
+        image, label = val_generator[i]
+        scores = model.predict(image, batch_size=8)  # batch size reduced to avoid OOM issue
+        val_predictions = np.append(val_predictions, scores, axis=0)
+        val_labels = np.append(val_labels, label, axis=0)
 
     # get a range between 0 and 1 by 1000ths
     rng = np.arange(0, 1, 0.001)
@@ -478,27 +510,31 @@ def get_max_fscore_matrix(val_predictions, val_labels):
     # set up an array to catch individual fscores for each class
     fscores = np.zeros((rng.shape[0], 28))
 
-    # loop through each prediction above the a threshold and calculate the fscore
+    # loop through each prediction above the threshold and calculate the fscore
     for j,k in enumerate(rng):
         for i in range(28):
             p = np.array(val_predictions[:,i]>k, dtype=np.int8)
             score = f1_score(val_labels[:,i], p, average='binary')
             fscores[j,i] = score
 
-    # log results for inspection
-    logging.info('Individual F1-scores for each class:')
-    logging.info(np.max(fscores, axis=0))
-    logging.info('Macro F1-score CV ='.format(np.mean(np.max(fscores, axis=0))))
-
     # Make a matrix that will hold the best threshold for each class to maximize Fscore
     max_fscore_thresholds = np.empty(28, dtype=np.float16)
     for i in range(28):
         max_fscore_thresholds[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
 
-    logging.info('Probability threshold maximizing CV F1-score for each class:')
-    logging.info(max_fscore_thresholds)
+    macro_f1 = np.mean(np.max(fscores, axis=0))
 
-    return max_fscore_thresholds
+    logging.info('Probability threshold maximizing F1-score for each class:')
+    logging.info(max_fscore_thresholds)
+    logging.info('Macro F1 Score -> {}'.format(macro_f1))
+
+
+    # write out the eval csv
+    if save_eval:
+        # write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds)
+        pass
+
+    return max_fscore_thresholds, macro_f1
 
 
 # ----------------------------------------------

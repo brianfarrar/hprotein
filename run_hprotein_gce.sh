@@ -3,10 +3,10 @@ python3 task.py \
     --run_training="True" \
     --batch_size=32 \
     --epochs=20 \
+    --run_fine_tune="True" \
+    --fine_tune_epochs=3 \
     --gpu_count=1 \
     --run_eval="True" \
-    --validation_steps=24 \
-    --validation_split=3072 \
     --run_predict="True" \
     --new_model="True" \
     --model_name="model" \

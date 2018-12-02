@@ -39,8 +39,8 @@ def getTrainDataset():
 
 
 def getTestDataset():
-    path_to_test = DIR + '/test/'
-    data = pd.read_csv(DIR + '/sample_submission.csv')
+    path_to_test = 'stage1_test'
+    data = pd.read_csv('stage1_submit/sample_submission.csv')
 
     paths = []
     labels = []
@@ -310,6 +310,7 @@ hist = model.fit_generator(
     callbacks=[checkpoint])
 
 for layer in model.layers:
+    print('layer name -> {}'.format(layer.name))
     layer.trainable = False
 
 model.layers[-1].trainable = True
@@ -366,7 +367,6 @@ def getOptimalT(mdl, fullValGen):
     print(np.max(f1s, axis=0))
     print(np.mean(np.max(f1s, axis=0)))
 
-    plt.plot(rng, f1s)
     T = np.empty(28)
     for i in range(28):
         T[i] = rng[np.where(f1s[:, i] == np.max(f1s[:, i]))[0][0]]
@@ -392,7 +392,7 @@ else:
 pathsTest, labelsTest = getTestDataset()
 
 testg = ProteinDataGenerator(pathsTest, labelsTest, BATCH_SIZE, SHAPE)
-submit = pd.read_csv(DIR + '/sample_submission.csv')
+submit = pd.read_csv('stage1_submit/sample_submission.csv')
 P = np.zeros((pathsTest.shape[0], 28))
 for i in tqdm(range(len(testg))):
     images, labels = testg[i]

@@ -30,6 +30,12 @@ def run(argv=None):
     parser.add_argument('--epochs', dest='epochs', default=10, type=int,
                         help='Number of epochs')
 
+    parser.add_argument('--run_fine_tune', dest='run_fine_tune', default='True',
+                        help='Text boolean to decide wheter to run fine tuning step')
+
+    parser.add_argument('--fine_tune_epochs', dest='fine_tune_epochs', default=3, type=int,
+                        help='Number of epochs to fine tune')
+
     parser.add_argument('--gpu_count', dest='gpu_count', default=1, type=int,
                         help='Number of epochs')
 
@@ -37,9 +43,6 @@ def run(argv=None):
                         help='Text boolean to decide whether to run eval')
 
     parser.add_argument('--validation_steps', dest='validation_steps', default=10, type=int,
-                        help='Number of validation_steps')
-
-    parser.add_argument('--validation_split', dest='validation_split', default=3000, type=int,
                         help='Number of validation_steps')
 
     parser.add_argument('--run_predict', dest='run_predict', default='True',
@@ -80,107 +83,184 @@ def run(argv=None):
     else:
         unique_id = args.model_name.split('_')[-1]
 
-    # get data and create train/test split
-
-    train_specimen_ids, \
-    val_specimen_ids, \
-    train_labels, \
-    val_labels = hprotein.get_train_test_split(args, test_size=args.validation_split)
-
-    # create data generators
-    logging.info('Creating Hprotein training data generator...')
-    training_generator = hprotein.HproteinDataGenerator(args, args.train_folder, train_specimen_ids, train_labels, shuffle=True)
-    logging.info('Creating Hprotein validation data generator...')
-    val_generator = hprotein.HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels)
-
     if hprotein.text_to_bool(args.run_training):
-        run_training(args, training_generator, val_generator)
+        run_training(args)
 
     if hprotein.text_to_bool(args.run_eval):
-        max_thresholds_matrix = run_eval(args, val_generator, val_specimen_ids)
+        run_eval(args)
 
     if hprotein.text_to_bool(args.run_predict):
-        run_predict(args, max_thresholds_matrix)
+        run_predict(args)
 
 
 # ---------------------------------
 # runs the train op
 # ---------------------------------
-def run_training(args, training_generator, val_generator):
+def run_training(args):
 
     # Log start of training process
     logging.info('Starting run_training...')
 
-    # create checkpoint and learning rate modifier
-    checkpoint = ModelCheckpoint('{}.model'.format(args.model_name),
+    # load the data
+    specimen_ids, labels = hprotein.get_data(args.train_folder, args.label_folder, mode='train',
+                                             filter_ids=hprotein.validation_set)
+    val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
+                                                     filter_ids=hprotein.validation_set)
+
+    # create data generators
+    logging.info('Creating Hprotein training data generator...')
+    training_generator = hprotein.HproteinDataGenerator(args,
+                                                        args.train_folder,
+                                                        specimen_ids,
+                                                        labels,
+                                                        shuffle=True,
+                                                        augment=True)
+
+    logging.info('Creating Hprotein validation data generator...')
+    val_generator = hprotein.HproteinDataGenerator(args,
+                                                   args.train_folder,
+                                                   val_specimen_ids,
+                                                   val_labels)
+
+    # create checkpoint
+    checkpoint = ModelCheckpoint('models/{}.model'.format(args.model_name),
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
-    reduce_learning_rate = ReduceLROnPlateau(monitor='val_loss', factor=0.75, patience=3, verbose=1, mode='min')
 
     # create the model
-    model = hprotein.create_model(hprotein.SHAPE, model_name='gap_net_selu')
+    model_name = 'gap_net_bn_relu'
+    model = hprotein.create_model(hprotein.SHAPE, model_name=model_name)
     if args.gpu_count > 1:
         model = multi_gpu_model(model, gpus=args.gpu_count)
+        use_multiprocessing = True
+        workers = args.gpu_count * 2
+    elif args.gpu_count == 1:
+        use_multiprocessing = True
+        workers = args.gpu_count * 4
+    else:
+        use_multiprocessing = False
+        workers = 1
 
+    # primary training run
     model.compile(loss='binary_crossentropy', optimizer=Adam(1e-03), metrics=['acc', hprotein.f1])
-
     model.summary()
 
+    logging.info("Start of primary training...")
     hist = model.fit_generator(training_generator,
                                steps_per_epoch=len(training_generator),
                                validation_data=val_generator,
-                               validation_steps=args.validation_steps,
+                               validation_steps=len(val_generator),
                                epochs=args.epochs,
-                               use_multiprocessing=True,
+                               use_multiprocessing=use_multiprocessing,
                                max_queue_size=128,
-                               workers=16,
+                               workers=workers,
                                verbose=1,
-                               callbacks=[checkpoint,reduce_learning_rate])
+                               callbacks=[checkpoint])
+
+    logging.info("Start of fine tune training...")
+    if hprotein.text_to_bool(args.run_fine_tune):
+
+        if model_name is 'gap_net_bn_relu':
+
+            checkpoint = ModelCheckpoint('models/{}_fine_tune.model'.format(args.model_name),
+                                         monitor='val_loss', verbose=1, save_best_only=True,
+                                         save_weights_only=False, mode='min', period=1)
+
+            for layer in model.layers:
+                layer.trainable = False
+
+            model.layers[-1].trainable = True
+            model.layers[-2].trainable = True
+            model.layers[-3].trainable = True
+            model.layers[-4].trainable = True
+            model.layers[-5].trainable = True
+            model.layers[-6].trainable = True
+            model.layers[-7].trainable = True
+            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            fths = model.fit_generator(training_generator,
+                                       steps_per_epoch=len(training_generator),
+                                       validation_data=val_generator,
+                                       validation_steps=len(val_generator),
+                                       epochs=args.epochs,
+                                       use_multiprocessing=use_multiprocessing,
+                                       max_queue_size=128,
+                                       workers=workers,
+                                       verbose=1,
+                                       callbacks=[checkpoint])
+
+        else:
+            logging.warning('Fine tuning not supported for model name: {}'.format(model_name))
 
 
 # ---------------------------------
 # runs the eval op
 # ---------------------------------
-def run_eval(args, val_generator, val_specimen_ids):
+def run_eval(args):
 
     # Log start of eval process
     logging.info('Starting run_eval...')
 
-    # loading model
-    final_model = load_model('{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+    # load the data
+    val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
+                                                     filter_ids=hprotein.validation_set)
 
-    # create empty arrays to receive the predictions and  labels
-    val_predictions = np.empty((0, 28))
-    val_labels = np.empty((0, 28))
+    # create data generator
+    logging.info('Creating Hprotein validation data generator...')
+    val_generator = hprotein.HproteinDataGenerator(args,
+                                                   args.train_folder,
+                                                   val_specimen_ids,
+                                                   val_labels)
 
-    # loop through the validation data and make predictions
-    for i in range(len(val_generator)):
-        image, label = val_generator[i]
-        scores = final_model.predict(image, batch_size=8)  # batch size reduced to avoid OOM issue
-        val_predictions = np.append(val_predictions, scores, axis=0)
-        val_labels = np.append(val_labels, label, axis=0)
+    # eval primary model
+    logging.info('Loading primary training model...')
+    model = load_model('models/{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+    model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator, save_eval=False)
 
-    max_fscore_thresholds = hprotein.get_max_fscore_matrix(val_predictions, val_labels)
+    # eval fine tune model
+    logging.info('Loading fine tuned training model...')
+    model = load_model('models/{}_fine_tune.model'.format(args.model_name),
+                       custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1})
+    model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator, save_eval=False)
 
-    # write out the submission csv
-    hprotein.write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds)
+    if model1_macro_f1 > model2_macro_f1:
+        logging.info('Primary model has a better Macro-F1, saving thresholds...')
+        max_fscore_thresholds = model1_max_fscore_thresholds
+        np.save('models/{}_thresh.npy'.format(args.model_name), max_fscore_thresholds)
+    else:
+        logging.info('Fine-tune model has a better Macro-F1, saving thresholds...')
+        max_fscore_thresholds = model2_max_fscore_thresholds
+        np.save('models/{}_fine_tune_thresh.npy'.format(args.model_name), max_fscore_thresholds)
 
     logging.info("Finished evaluation...")
-
-    return max_fscore_thresholds
 
 
 # ---------------------------------
 # runs the predict op
 # ---------------------------------
-def run_predict(args, max_thresholds_matrix):
+def run_predict(args):
 
     # Log start of predict process
     logging.info('Starting run_predict...')
 
-    # loading model
-    logging.info('Loading model {}...'.format(args.model_name))
-    final_model = load_model('{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+    # Get thresholds
+    logging.info('Getting correct model and thresholds...')
+    if os.path.isfile('models/{}_thresh.npy'.format(args.model_name)):
+
+        # load model
+        logging.info('Loading model {}...'.format(args.model_name))
+        final_model = load_model('models/{}.model'.format(args.model_name), custom_objects={'f1': hprotein.f1})
+
+        # load thresholds
+        max_thresholds_matrix = np.load('models/{}_thresh.npy'.format(args.model_name))
+
+    elif os.path.isfile('models/{}_fine_tune_thresh.npy'.format(args.model_name)):
+
+        # load model
+        logging.info('Loading model {}_fine_tune...'.format(args.model_name))
+        final_model = load_model('models/{}_fine_tune.model'.format(args.model_name), custom_objects={'f1_loss': hprotein.f1_loss})
+
+        # load thresholds
+        max_thresholds_matrix = np.load('models/{}_fine_tune_thresh.npy'.format(args.model_name))
 
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
