@@ -106,7 +106,8 @@ def run_training(args):
 
     # get the validation set
     df_valid = pd.read_csv(args.val_csv)
-    validation_set = df_valid('Id').to_list()
+    validation_set = df_valid.values.tolist()
+    validation_set = [item for sublist in validation_set for item in sublist]
 
     # load the data
     specimen_ids, labels = hprotein.get_data(args.train_folder, args.label_folder, mode='train',
@@ -209,7 +210,8 @@ def run_eval(args):
 
     # get the validation set
     df_valid = pd.read_csv(args.val_csv)
-    validation_set = df_valid('Id').to_list()
+    validation_set = df_valid.values.tolist()
+    validation_set = [item for sublist in validation_set for item in sublist]
 
     # load the data
     val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
