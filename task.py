@@ -42,6 +42,9 @@ def run(argv=None):
     parser.add_argument('--run_eval', dest='run_eval', default='True',
                         help='Text boolean to decide whether to run eval')
 
+    parser.add_argument('--val_csv', dest='val_csv', default='val_set.csv',
+                        help='Model to run.')
+
     parser.add_argument('--validation_steps', dest='validation_steps', default=10, type=int,
                         help='Number of validation_steps')
 
@@ -101,11 +104,15 @@ def run_training(args):
     # Log start of training process
     logging.info('Starting run_training...')
 
+    # get the validation set
+    df_valid = pd.read_csv(args.val_csv)
+    validation_set = df_valid('Id').to_list()
+
     # load the data
     specimen_ids, labels = hprotein.get_data(args.train_folder, args.label_folder, mode='train',
-                                             filter_ids=hprotein.validation_set)
+                                             filter_ids=validation_set)
     val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
-                                                     filter_ids=hprotein.validation_set)
+                                                     filter_ids=validation_set)
 
     # create data generators
     logging.info('Creating Hprotein training data generator...')
@@ -200,9 +207,13 @@ def run_eval(args):
     # Log start of eval process
     logging.info('Starting run_eval...')
 
+    # get the validation set
+    df_valid = pd.read_csv(args.val_csv)
+    validation_set = df_valid('Id').to_list()
+
     # load the data
     val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
-                                                     filter_ids=hprotein.validation_set)
+                                                     filter_ids=validation_set)
 
     # create data generator
     logging.info('Creating Hprotein validation data generator...')
@@ -257,14 +268,16 @@ def run_predict(args):
 
         # load model
         logging.info('Loading model {}_fine_tune...'.format(args.model_name))
-        final_model = load_model('models/{}_fine_tune.model'.format(args.model_name), custom_objects={'f1_loss': hprotein.f1_loss})
+        final_model = load_model('models/{}_fine_tune.model'.format(args.model_name),
+                                 custom_objects={'f1': hprotein.f1, 'f1_loss': hprotein.f1_loss})
 
         # load thresholds
         max_thresholds_matrix = np.load('models/{}_fine_tune_thresh.npy'.format(args.model_name))
 
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
-    predict_set_sids, predict_set_lbls = hprotein.get_predict_data(args.predict_folder, args.submission_folder)
+    predict_set_sids, predict_set_lbls = hprotein.get_data(args.predict_folder, args.submission_folder, mode='test',
+                                                           filter_ids=None)
     args.batch_size = 8
     predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls)
 
