@@ -4,7 +4,7 @@ import distutils.util
 import cv2
 import numpy as np
 import pandas as pd
-import random
+import os
 
 import tensorflow as tf
 from tensorflow.python.lib.io import file_io
@@ -13,23 +13,21 @@ import keras
 from keras import backend as K
 from keras.activations import selu
 from keras.layers import Activation, Dropout, Flatten, Dense, Input, Conv2D, MaxPooling2D, BatchNormalization, \
-                         Concatenate, ReLU, LeakyReLU, GlobalAveragePooling2D
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
-from keras.preprocessing.image import ImageDataGenerator
-from keras.models import Sequential, load_model, Model
+                         Concatenate, ReLU, GlobalAveragePooling2D
+
+from keras.models import Model
+from keras.applications import InceptionResNetV2
 from keras.layers.noise import AlphaDropout
+from keras.models import load_model
 
 from sklearn.metrics import f1_score
 
 import imgaug as ia
 from imgaug import augmenters as iaa
 
-
-
 # constants
 COLORS = ['red','green', 'blue', 'yellow']
 IMAGE_SIZE = 512
-SHAPE = (IMAGE_SIZE, IMAGE_SIZE, 4)
 THRESHOLD = 0.5
 SEED = 42
 
@@ -56,14 +54,6 @@ mini_validate_set = ['001838f8-bbca-11e8-b2bc-ac1f6b6435d0',
                      'ffeae6f0-bbc9-11e8-b2bc-ac1f6b6435d0'
 ]
 
-# ------------------------------------------------
-# full validation set for testing purposes
-# ------------------------------------------------
-validation_set =['001838f8-bbca-11e8-b2bc-ac1f6b6435d0',
-                 '002daad6-bbc9-11e8-b2bc-ac1f6b6435d0',
-                 'ffeae6f0-bbc9-11e8-b2bc-ac1f6b6435d0'
-]
-
 # -------------------------------------------------------------
 # Converts a text based "True" or "False" to a python bool
 # -------------------------------------------------------------
@@ -86,6 +76,7 @@ def copy_file_to_gcs(fname_in, fname_out):
 # get a list of unique specimen ids
 # -----------------------------------------
 def get_specimen_ids(path):
+
     # get a list of all the images
     file_list = file_io.list_directory(path)
 
@@ -125,9 +116,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  path,
                  specimen_ids,
                  labels,
-                 shape=SHAPE,
+                 model_name='gap_net_bn_relu',
                  shuffle=False,
-                 use_cache=False,
                  augment=False):
 
         self.args = args
@@ -136,7 +126,14 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
         self.last_batch_padding = 0            # amount to pad the last batch to make it complete
-        self.shape = shape  # shape of features
+        self.model_name = model_name
+
+        # shape of features
+        if model_name == 'InceptionV2Resnet':
+            self.shape = (299, 299, 3)
+        else:
+            self.shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
+
         self.shuffle = shuffle  # boolean for shuffle
         self.augment = augment  # boolean for image augmentation
 
@@ -175,7 +172,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # load a batch of labels
         label_batch = self.labels[self.batch_size * index:self.batch_size * (index + 1)]
 
-        # load the batch with images and crop
+        # load the batch with images
         for i, specimen_id in enumerate(specimen_ids):
             feature_batch[i] = self.get_stacked_image(specimen_id)
 
@@ -192,19 +189,23 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
+        if self.model_name == 'InceptionV2Resnet':
+            image = cv2.resize(image, (self.shape[0], self.shape[1]))
+
         return image
 
     # -----------------------------------------
-    # get a stacked (4-channel) image
+    # get a stacked (3 or 4-channel) image
     # -----------------------------------------
     def get_stacked_image(self, specimen_id, lo_res=True):
 
         # create a numpy array to place the 1-channel images into
         image = np.zeros((self.shape))
 
-        for n, color in enumerate(COLORS):
+        for n in range(self.shape[2]):
+
             # get a single image
-            i = self.get_single_image(specimen_id, color, lo_res)
+            i = self.get_single_image(specimen_id, COLORS[n], lo_res)
 
             # store it a channel
             image[:, :, n] = i
@@ -241,7 +242,6 @@ class HproteinDataGenerator(keras.utils.Sequence):
             ], random_order=True)  # apply augmenters in random order
 
             # augment 25% of the time
-
             if np.random.uniform() > 0.75:
                 image = seq.augment_image(image)
 
@@ -268,7 +268,10 @@ def get_data(path, label_path, mode='train', filter_ids=None):
         logging.warning('Invalid mode {} specified'.format(mode))
 
     # get the labels for all specimen_ids
-    label_data = pd.read_csv(label_path)
+    if mode is 'test':
+        label_data = pd.read_csv(label_path + '/sample_submission.csv')
+    else:
+        label_data = pd.read_csv(label_path)
 
     # get the subset of labels that match the specimen images that are in the set of interest
     labels_subset = label_data.loc[label_data['Id'].isin(specimen_ids)]
@@ -337,7 +340,13 @@ def f1_loss(y_true, y_pred):
 # ------------------------------
 # create the model
 # ------------------------------
-def create_model(input_shape, model_name='basic_cnn'):
+def create_model(model_name='basic_cnn'):
+
+    # determine the input shape
+    if model_name == 'InceptionV2Resnet':
+        input_shape = (299, 299, 3)
+    else:
+        input_shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
     init = Input(input_shape)
 
@@ -431,7 +440,7 @@ def create_model(input_shape, model_name='basic_cnn'):
 
     elif model_name == 'gap_net_bn_relu':
 
-        dropRate = 0.25
+        drop_rate = 0.25
 
         x = BatchNormalization(axis=-1)(init)
         x = Conv2D(32, (3, 3))(x)  # , strides=(2,2))(x)
@@ -439,7 +448,7 @@ def create_model(input_shape, model_name='basic_cnn'):
 
         x = BatchNormalization(axis=-1)(x)
         x = MaxPooling2D(pool_size=(2, 2))(x)
-        ginp1 = Dropout(dropRate)(x)
+        ginp1 = Dropout(drop_rate)(x)
 
         x = BatchNormalization(axis=-1)(ginp1)
         x = Conv2D(64, (3, 3), strides=(2, 2))(x)
@@ -453,7 +462,7 @@ def create_model(input_shape, model_name='basic_cnn'):
 
         x = BatchNormalization(axis=-1)(x)
         x = MaxPooling2D(pool_size=(2, 2))(x)
-        ginp2 = Dropout(dropRate)(x)
+        ginp2 = Dropout(drop_rate)(x)
 
         x = BatchNormalization(axis=-1)(ginp2)
         x = Conv2D(128, (3, 3))(x)
@@ -464,7 +473,7 @@ def create_model(input_shape, model_name='basic_cnn'):
         x = BatchNormalization(axis=-1)(x)
         x = Conv2D(128, (3, 3))(x)
         x = ReLU()(x)
-        ginp3 = Dropout(dropRate)(x)
+        ginp3 = Dropout(drop_rate)(x)
 
         gap1 = GlobalAveragePooling2D()(ginp1)
         gap2 = GlobalAveragePooling2D()(ginp2)
@@ -474,7 +483,7 @@ def create_model(input_shape, model_name='basic_cnn'):
 
         x = BatchNormalization(axis=-1)(x)
         x = Dense(256, activation='relu')(x)
-        x = Dropout(dropRate)(x)
+        x = Dropout(drop_rate)(x)
 
         x = BatchNormalization(axis=-1)(x)
         x = Dense(256, activation='relu')(x)
@@ -482,6 +491,25 @@ def create_model(input_shape, model_name='basic_cnn'):
 
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
+
+    elif model_name == 'InceptionV2Resnet':
+
+        drop_rate = 0.25
+
+        base_model = InceptionResNetV2(include_top=False, weights='imagenet', input_shape=input_shape)
+
+        x = BatchNormalization(axis=-1)(init)
+        x = base_model(x)
+
+        x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
+        x = Flatten()(x)
+        x = Dropout(0.5)(x)
+        x = Dense(512, activation='relu')(x)
+        x = Dropout(0.5)(x)
+        x = Dense(28)(x)
+        x = Activation('sigmoid')(x)
+    else:
+        logging.info('Bad model name: {}'.format(model_name))
 
     model = Model(init, x)
 
@@ -500,7 +528,7 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     # loop through the validation data and make predictions
     for i in range(len(val_generator)):
         image, label = val_generator[i]
-        scores = model.predict(image, batch_size=8)  # batch size reduced to avoid OOM issue
+        scores = model.predict(image)
         val_predictions = np.append(val_predictions, scores, axis=0)
         val_labels = np.append(val_labels, label, axis=0)
 
@@ -537,6 +565,42 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     return max_fscore_thresholds, macro_f1
 
 
+def get_best_model(args):
+
+    final_model = None
+    max_thresholds_matrix = None
+
+    # Get thresholds
+    logging.info('Getting correct model and thresholds...')
+    if os.path.isfile('models/{}_thresh.npy'.format(args.model_label)):
+
+        # load model
+        logging.info('Loading model {}...'.format(args.model_label))
+        final_model = load_model('models/{}.model'.format(args.model_label), custom_objects={'f1': f1})
+
+        # load thresholds
+        max_thresholds_matrix = np.load('models/{}_thresh.npy'.format(args.model_label))
+
+    elif os.path.isfile('models/{}_fine_tune_thresh.npy'.format(args.model_label)):
+
+        # load model
+        logging.info('Loading model {}_fine_tune...'.format(args.model_label))
+        final_model = load_model('models/{}_fine_tune.model'.format(args.model_label),
+                                 custom_objects={'f1': f1, 'f1_loss': f1_loss})
+
+        # load thresholds
+        max_thresholds_matrix = np.load('models/{}_fine_tune_thresh.npy'.format(args.model_label))
+    else:
+        logging.warning("Can't find model file models/{}.model or models/{}_fine_tune.model".format(args.model_label,
+                                                                                                    args.model_label))
+
+    if max_thresholds_matrix is not None:
+        logging.info('Using the following thresholds:')
+        logging.info(max_thresholds_matrix)
+
+    return final_model, max_thresholds_matrix
+
+
 # ----------------------------------------------
 # writes out a submission file
 # ----------------------------------------------
@@ -555,21 +619,22 @@ def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding
     prediction_str = []
 
     # eliminate padding from end of prediction
-    predictions = predictions[:predictions.shape[0] - last_batch_padding, :]
+    #predictions = predictions[:predictions.shape[0] - last_batch_padding, :]
 
     # loop through predictions and generate the prediction string
-    for i in range(predictions.shape[0]):
-        logging.info('Writing prediction #{} for specimen_id: {}'.format(i+1, tmp_sid_list[i]))
+    for i in range(submit_data.shape[0]):
         submit_str = ' '
         for j in range(predictions.shape[1]):
-            if predictions[i, j] >= max_thresholds_matrix[j]:
+            if predictions[i, j] < max_thresholds_matrix[j]:
+                submit_str += ''
+            else:
                 submit_str += str(j) + ' '
 
         prediction_str.append(submit_str.strip())
 
     submit_data['Predicted'] = np.array(prediction_str)
 
-    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_name), index=False)
+    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_label), index=False)
 
 
 def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds):
