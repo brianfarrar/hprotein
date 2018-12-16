@@ -516,6 +516,7 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     val_labels = np.empty((0, 28))
 
     # loop through the validation data and make predictions
+    logging.info('Getting predictions...')
     for i in tqdm(range(len(val_generator))):
         image, label = val_generator[i]
         scores = model.predict(image)
@@ -529,7 +530,8 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     fscores = np.zeros((rng.shape[0], 28))
 
     # loop through each prediction above the threshold and calculate the fscore
-    for j,k in tqdm(enumerate(rng)):
+    logging.info('Calculating f-scores at a range of thresholds...')
+    for j,k in enumerate(tqdm(rng)):
         for i in range(28):
             p = np.array(val_predictions[:,i]>k, dtype=np.int8)
             score = f1_score(val_labels[:,i], p, average='binary')
@@ -585,6 +587,7 @@ def xget_max_fscore_matrix(mdl, fullValGen, save_eval=False):
     print(T)
 
     return T, np.mean(np.max(f1s, axis=0))
+
 
 # ----------------------------------------------------
 # Returns the best model and fscore matrix from disk

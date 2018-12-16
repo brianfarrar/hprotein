@@ -4,7 +4,7 @@ import argparse
 import uuid
 import numpy as np
 import pandas as pd
-import tqdm
+from tqdm import tqdm
 import hprotein
 
 from keras.callbacks import ModelCheckpoint
@@ -308,7 +308,7 @@ def run_predict(args):
 
     # get the predictions
     logging.info('Making predictions...')
-    for i in range(len(predict_generator)):
+    for i in tqdm(range(len(predict_generator))):
         images, labels = predict_generator[i]
         score = final_model.predict(images)
         predictions[i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
@@ -317,7 +317,7 @@ def run_predict(args):
     # convert the predictions into the submission file format
     logging.info('Converting to submission format...')
     prediction_str = []
-    for row in range(submit.shape[0]):
+    for row in tqdm(range(submit.shape[0])):
         str_label = ''
         for col in range(predictions.shape[1]):
             if predictions[row, col] < max_thresholds_matrix[col]:
