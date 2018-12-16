@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="True" \
+    --run_training="False" \
     --batch_size=32 \
     --epochs=20 \
-    --run_fine_tune="True" \
-    --fine_tune_epochs=3 \
+    --run_fine_tune="False" \
+    --fine_tune_epochs=1 \
     --gpu_count=1 \
     --run_eval="True" \
+    --val_set="val_set.csv" \
     --run_predict="True" \
-    --new_model="True" \
-    --model_name="model" \
-    --model_folder="model" \
+    --new_model="False" \
+    --model_name="gap_net_bn_relu" \
+    --model_label="model_ca200f" \
+    --model_folder="models" \
     --train_folder="stage1_train" \
-    --label_folder="stage1_labels/train.csv" \
+    --label_folder="stage1_labels" \
+    --label_list="train.csv" \
     --predict_folder="stage1_test" \
     --submission_folder="stage1_submit" \
+    --submission_list="sample_submission.csv" \
     --job_id=''

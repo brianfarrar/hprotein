@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+from tqdm import tqdm
 
 import tensorflow as tf
 from tensorflow.python.lib.io import file_io
@@ -20,6 +21,7 @@ from keras.applications import InceptionResNetV2
 from keras.layers.noise import AlphaDropout
 from keras.models import load_model
 
+#from sklearn.metrics import f1_score as off1
 from sklearn.metrics import f1_score
 
 import imgaug as ia
@@ -75,22 +77,17 @@ def copy_file_to_gcs(fname_in, fname_out):
 # -----------------------------------------
 # get a list of unique specimen ids
 # -----------------------------------------
-def get_specimen_ids(path):
+def get_specimen_ids(path_name, list_name):
 
-    # get a list of all the images
-    file_list = file_io.list_directory(path)
-
-    # truncate the file names to make a specimen id
-    specimen_ids = [f[:36] for f in file_list]
-
-    # eliminate duplicates
-    specimen_ids = list(set(specimen_ids))
+    df = pd.read_csv(path_name + '/' + list_name)
+    s = df.values
+    specimen_ids = s[:, 0]
 
     return specimen_ids
 
 
 # -----------------------------------------
-# make filenames from the specimen id
+# make file names from the specimen id
 # -----------------------------------------
 def get_image_fname(path, specimen_id, color, lo_res=True):
 
@@ -253,10 +250,10 @@ class HproteinDataGenerator(keras.utils.Sequence):
 # -----------------------------------------------------------
 # get the available specimen ids and corresponding labels
 # -----------------------------------------------------------
-def get_data(path, label_path, mode='train', filter_ids=None):
+def get_data(path_name, list_name, mode='train', filter_ids=[]):
 
     # get the list of specimen ids
-    specimen_ids = get_specimen_ids(path)
+    specimen_ids = get_specimen_ids(path_name, list_name)
 
     if mode is 'train':
         specimen_ids = [specimen_id for specimen_id in specimen_ids if specimen_id not in filter_ids]
@@ -267,33 +264,26 @@ def get_data(path, label_path, mode='train', filter_ids=None):
     else:
         logging.warning('Invalid mode {} specified'.format(mode))
 
-    # get the labels for all specimen_ids
-    if mode is 'test':
-        label_data = pd.read_csv(label_path + '/sample_submission.csv')
-    else:
-        label_data = pd.read_csv(label_path)
-
-    # get the subset of labels that match the specimen images that are in the set of interest
-    labels_subset = label_data.loc[label_data['Id'].isin(specimen_ids)]
-
-    #
     # if the mode is 'test' then create an empty label set, otherwise convert labels to trainer format
-    #
-
     if mode is 'test':
+
         # set up an array to receive predicted labels
         labels = np.ones((len(specimen_ids), 28))
 
     else:
 
-        # set up the list that will contain the list of encoded labels for each specimen id
+        # set up the list that will contain the list of decoded labels for each specimen id
         labels = []
 
+        # read in the ground truth labels
+        df_labels = pd.read_csv(path_name + '/' + list_name)
+
         # loop through each specimen_id
-        for specimen_id in specimen_ids:
+        logging.info('Decoding train/validate labels...')
+        for specimen_id in tqdm(specimen_ids):
 
             # split the space separated multi-label into a list of individual labels
-            split_labels = (labels_subset.loc[labels_subset['Id'] == specimen_id])['Target'].str.split(' ')
+            split_labels = (df_labels.loc[df_labels['Id'] == specimen_id])['Target'].str.split(' ')
 
             # set up a numpy array to receive the encoded label
             l = np.zeros(28)
@@ -526,7 +516,7 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     val_labels = np.empty((0, 28))
 
     # loop through the validation data and make predictions
-    for i in range(len(val_generator)):
+    for i in tqdm(range(len(val_generator))):
         image, label = val_generator[i]
         scores = model.predict(image)
         val_predictions = np.append(val_predictions, scores, axis=0)
@@ -539,14 +529,15 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     fscores = np.zeros((rng.shape[0], 28))
 
     # loop through each prediction above the threshold and calculate the fscore
-    for j,k in enumerate(rng):
+    for j,k in tqdm(enumerate(rng)):
         for i in range(28):
             p = np.array(val_predictions[:,i]>k, dtype=np.int8)
             score = f1_score(val_labels[:,i], p, average='binary')
             fscores[j,i] = score
 
+
     # Make a matrix that will hold the best threshold for each class to maximize Fscore
-    max_fscore_thresholds = np.empty(28, dtype=np.float16)
+    max_fscore_thresholds = np.empty(28)
     for i in range(28):
         max_fscore_thresholds[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
 
@@ -565,6 +556,39 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     return max_fscore_thresholds, macro_f1
 
 
+def xget_max_fscore_matrix(mdl, fullValGen, save_eval=False):
+    lastFullValPred = np.empty((0, 28))
+    lastFullValLabels = np.empty((0, 28))
+    for i in tqdm(range(len(fullValGen))):
+        im, lbl = fullValGen[i]
+        scores = mdl.predict(im)
+        lastFullValPred = np.append(lastFullValPred, scores, axis=0)
+        lastFullValLabels = np.append(lastFullValLabels, lbl, axis=0)
+    print(lastFullValPred.shape, lastFullValLabels.shape)
+
+    rng = np.arange(0, 1, 0.001)
+    f1s = np.zeros((rng.shape[0], 28))
+    for j, t in enumerate(tqdm(rng)):
+        for i in range(28):
+            p = np.array(lastFullValPred[:, i] > t, dtype=np.int8)
+            # scoref1 = K.eval(f1_score(fullValLabels[:,i], p, average='binary'))
+            scoref1 = off1(lastFullValLabels[:, i], p, average='binary')
+            f1s[j, i] = scoref1
+
+    print(np.max(f1s, axis=0))
+    print(np.mean(np.max(f1s, axis=0)))
+
+    T = np.empty(28)
+    for i in range(28):
+        T[i] = rng[np.where(f1s[:, i] == np.max(f1s[:, i]))[0][0]]
+    # print('Choosing threshold: ', T, ', validation F1-score: ', max(f1s))
+    print(T)
+
+    return T, np.mean(np.max(f1s, axis=0))
+
+# ----------------------------------------------------
+# Returns the best model and fscore matrix from disk
+# ----------------------------------------------------
 def get_best_model(args):
 
     final_model = None
@@ -622,7 +646,7 @@ def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding
     #predictions = predictions[:predictions.shape[0] - last_batch_padding, :]
 
     # loop through predictions and generate the prediction string
-    for i in range(submit_data.shape[0]):
+    for i in tqdm(range(submit_data.shape[0])):
         submit_str = ' '
         for j in range(predictions.shape[1]):
             if predictions[i, j] < max_thresholds_matrix[j]:

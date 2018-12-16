@@ -12,7 +12,7 @@ from imgaug import augmenters as iaa
 import cv2
 
 BATCH_SIZE = 32
-SEED = 777
+SEED = 42
 SHAPE = (512, 512, 4)
 DIR = 'stage1_train'
 VAL_RATIO = 0.1 # 10 % as validation
@@ -258,7 +258,7 @@ def create_model(input_shape):
     model = Model(init, x)
 
     return model
-
+'''
 model = create_model(SHAPE)
 
 model.compile(
@@ -268,7 +268,7 @@ model.compile(
 
 model.summary()
 
-
+'''
 paths, labels = getTrainDataset()
 
 # divide to
@@ -282,18 +282,31 @@ labelsTrain = labels[0:lastTrainIndex]
 pathsVal = paths[lastTrainIndex:]
 labelsVal = labels[lastTrainIndex:]
 
+'''
+import hprotein
+# get the validation set
+df_valid = pd.read_csv("val_set.csv")
+validation_set = df_valid.values.tolist()
+validation_set = [item for sublist in validation_set for item in sublist]
+validation_set = [os.path.join(DIR, s) for s in validation_set]
+
+# load the data
+pathsVal, labelsVal = hprotein.get_data('stage1_train', 'stage1_labels/train.csv', mode='validate',
+                                        filter_ids=validation_set)
+'''
 print(paths.shape, labels.shape)
 print(pathsTrain.shape, labelsTrain.shape, pathsVal.shape, labelsVal.shape)
 
-tg = ProteinDataGenerator(pathsTrain, labelsTrain, BATCH_SIZE, SHAPE, use_cache=False, augment = False, shuffle = False)
-vg = ProteinDataGenerator(pathsVal, labelsVal, BATCH_SIZE, SHAPE, use_cache=False, shuffle = False)
+tg = ProteinDataGenerator(pathsTrain, labelsTrain, BATCH_SIZE, SHAPE, use_cache=False, augment=False, shuffle=False)
 
+vg = ProteinDataGenerator(pathsVal, labelsVal, BATCH_SIZE, SHAPE, use_cache=False, shuffle = False)
+'''
 # https://keras.io/callbacks/#modelcheckpoint
 checkpoint = ModelCheckpoint('./base.model', monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=False, mode='min', period=1)
 reduceLROnPlato = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, verbose=1, mode='min')
 
 
-epochs = 20
+epochs = 10
 
 use_multiprocessing = False # DO NOT COMBINE MULTIPROCESSING WITH CACHE!
 workers = 1 # DO NOT COMBINE MULTIPROCESSING WITH CACHE!
@@ -336,14 +349,18 @@ model.fit_generator(
     verbose=1,
     max_queue_size=4
 )
+'''
 
-bestModel = load_model('./base.model', custom_objects={'f1': f1}) #, 'f1_loss': f1_loss})
+#bestModel = load_model('./base.model', custom_objects={'f1': f1}) #, 'f1_loss': f1_loss})
 #bestModel = model
+
+bestModel = load_model('models/model_ca200f_fine_tune.model', custom_objects={'f1': f1, 'f1_loss': f1_loss})
+model = load_model('models/model_ca200f.model', custom_objects={'f1': f1})
 
 fullValGen = vg
 
 from sklearn.metrics import f1_score as off1
-
+#from sklearn.metrics import f1_score
 
 def getOptimalT(mdl, fullValGen):
     lastFullValPred = np.empty((0, 28))
@@ -375,7 +392,9 @@ def getOptimalT(mdl, fullValGen):
 
     return T, np.mean(np.max(f1s, axis=0))
 
-fullValGen = ProteinDataGenerator(paths[lastTrainIndex:], labels[lastTrainIndex:], BATCH_SIZE, SHAPE)
+
+#fullValGen = ProteinDataGenerator(paths[lastTrainIndex:], labels[lastTrainIndex:], BATCH_SIZE, SHAPE)
+fullValGen = ProteinDataGenerator(pathsVal, labelsVal, BATCH_SIZE, SHAPE)
 print('Last model after fine-tuning')
 T1, ff1 = getOptimalT(model, fullValGen)
 
@@ -401,6 +420,7 @@ for i in tqdm(range(len(testg))):
 
 PP = np.array(P)
 
+
 prediction = []
 
 for row in tqdm(range(submit.shape[0])):
@@ -415,4 +435,4 @@ for row in tqdm(range(submit.shape[0])):
     prediction.append(str_label.strip())
 
 submit['Predicted'] = np.array(prediction)
-submit.to_csv('4channels_cnn_from_scratch.csv', index=False)
+submit.to_csv('qqqq_testy_tester.csv', index=False)
