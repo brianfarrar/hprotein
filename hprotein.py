@@ -128,8 +128,19 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.specimen_ids = specimen_ids  # list of features
         self.labels = labels  # list of labels
         self.batch_size = args.batch_size  # batch size
-        self.last_batch_padding = 0            # amount to pad the last batch to make it complete
         self.model_name = model_name
+
+        # get the number of examples to generate
+        example_count = len(self.specimen_ids)
+
+        # calculate the number of batches
+        self.batch_count = int(np.ceil(example_count / float(self.batch_size)))
+
+        # get the size of the last batch
+        last_batch_size = example_count - ((self.batch_count - 1) * self.batch_size)
+
+        # set the amount to pad the last batch
+        self.last_batch_padding = self.batch_size - last_batch_size
 
         # shape of features
         if model_name == 'InceptionV2Resnet':
@@ -146,20 +157,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
     # Required function to determine the number of batches
     # -------------------------------------------------------
     def __len__(self):
-
-        # get the number of examples to generate
-        example_count = len(self.specimen_ids)
-
-        # calculate the number of batches
-        batch_count = int(np.ceil(example_count / float(self.batch_size)))
-
-        # get the size of the last batch
-        last_batch_size = example_count - ((batch_count - 1) * self.batch_size)
-
-        # set the amount to pad the last batch
-        self.last_batch_padding = self.batch_size - last_batch_size
-
-        return batch_count
+        return self.batch_count
 
     # -------------------------------------------------------
     # Required function to get a batch

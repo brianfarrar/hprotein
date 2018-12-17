@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="False" \
-    --batch_size=32 \
-    --epochs=20 \
-    --change_lr_epoch=16
-    --run_fine_tune="False" \
+    --run_training="True" \
+    --batch_size=16 \
+    --epochs=30 \
+    --change_lr_epoch=21 \
+    --run_fine_tune="True" \
     --fine_tune_epochs=1 \
-    --gpu_count=1 \
+    --gpu_count=8 \
     --run_eval="True" \
     --val_set="val_set.csv" \
     --run_predict="True" \
-    --new_model="False" \
+    --new_model="True" \
     --model_name="gap_net_bn_relu" \
-    --model_label="model_ca200f" \
+    --model_label="model" \
     --model_folder="models" \
     --train_folder="stage1_train" \
     --label_folder="stage1_labels" \
