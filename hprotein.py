@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+
 from tqdm import tqdm
 
 import tensorflow as tf
@@ -23,6 +24,11 @@ from keras.models import load_model
 
 #from sklearn.metrics import f1_score as off1
 from sklearn.metrics import f1_score
+
+import warnings
+warnings.filterwarnings("ignore",
+                        message="F-score is ill-defined and being set to 0.0 due to no true samples.")
+
 
 import imgaug as ia
 from imgaug import augmenters as iaa
@@ -599,27 +605,29 @@ def get_best_model(args):
 
     # Get thresholds
     logging.info('Getting correct model and thresholds...')
-    if os.path.isfile('models/{}_thresh.npy'.format(args.model_label)):
+    if os.path.isfile('{}/{}_thresh.npy'.format(args.model_folder, args.model_label)):
 
         # load model
         logging.info('Loading model {}...'.format(args.model_label))
-        final_model = load_model('models/{}.model'.format(args.model_label), custom_objects={'f1': f1})
+        final_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label), custom_objects={'f1': f1})
 
         # load thresholds
-        max_thresholds_matrix = np.load('models/{}_thresh.npy'.format(args.model_label))
+        max_thresholds_matrix = np.load('{}/{}_thresh.npy'.format(args.model_folder, args.model_label))
 
-    elif os.path.isfile('models/{}_fine_tune_thresh.npy'.format(args.model_label)):
+    elif os.path.isfile('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label)):
 
         # load model
         logging.info('Loading model {}_fine_tune...'.format(args.model_label))
-        final_model = load_model('models/{}_fine_tune.model'.format(args.model_label),
+        final_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
                                  custom_objects={'f1': f1, 'f1_loss': f1_loss})
 
         # load thresholds
-        max_thresholds_matrix = np.load('models/{}_fine_tune_thresh.npy'.format(args.model_label))
+        max_thresholds_matrix = np.load('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label))
     else:
-        logging.warning("Can't find model file models/{}.model or models/{}_fine_tune.model".format(args.model_label,
-                                                                                                    args.model_label))
+        logging.warning("Can't find model file {}/{}.model or {}/{}_fine_tune.model".format(args.model_folder,
+                                                                                            args.model_label,
+                                                                                            args.model_folder,
+                                                                                            args.model_label))
 
     if max_thresholds_matrix is not None:
         logging.info('Using the following thresholds:')
@@ -692,3 +700,21 @@ def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_threshold
     eval_output['Predictions'] = np.array(val_predictions_str)
 
     eval_output.to_csv(args.submission_folder + '/eval_{}.csv'.format(args.model_name), index=False)
+
+# ----------------------------------------------------
+# learning rate schedule for LearningRateSchedule
+# ----------------------------------------------------
+def lr_decay_schedule(change_point=15):
+
+    def schedule(epoch):
+
+        if epoch < change_point:
+            lr = 1e-3
+        else:
+            lr = 1e-4
+
+        logging.info('Current learning rate is {}'.format(lr))
+
+        return lr
+
+    return schedule

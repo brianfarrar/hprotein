@@ -3,6 +3,7 @@ python3 task.py \
     --run_training="False" \
     --batch_size=32 \
     --epochs=20 \
+    --change_lr_epoch=16
     --run_fine_tune="False" \
     --fine_tune_epochs=1 \
     --gpu_count=1 \

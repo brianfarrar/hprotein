@@ -7,9 +7,10 @@ import pandas as pd
 from tqdm import tqdm
 import hprotein
 
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras.optimizers import Adam
 from keras.models import load_model
+from keras.utils import multi_gpu_model
 
 
 # -------------------------------------------------------------
@@ -27,6 +28,9 @@ def run(argv=None):
 
     parser.add_argument('--epochs', dest='epochs', default=10, type=int,
                         help='Number of epochs')
+
+    parser.add_argument('--change_lr_epoch', dest='change_lr_epoch', default=16, type=int,
+                        help='Epoch to reduce learning rate')
 
     parser.add_argument('--run_fine_tune', dest='run_fine_tune', default='True',
                         help='Text boolean to decide wheter to run fine tuning step')
@@ -115,7 +119,8 @@ def run_training(args):
     validation_set = [item for sublist in validation_set for item in sublist]
 
     # load the data
-    specimen_ids, labels = hprotein.get_data(args.label_folder, args.label_list, mode='train')
+    specimen_ids, labels = hprotein.get_data(args.label_folder, args.label_list, mode='train',
+                                             filter_ids=validation_set)
 
     val_specimen_ids, val_labels = hprotein.get_data(args.label_folder, args.label_list, mode='validate',
                                                      filter_ids=validation_set)
@@ -137,19 +142,26 @@ def run_training(args):
                                                    val_labels,
                                                    model_name=args.model_name)
 
-    # create checkpoint
+    # create callbacks
     checkpoint = ModelCheckpoint('{}/{}.model'.format(args.model_folder, args.model_label),
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
 
-    # TODO: Create learning rate schedule callback using LearningRateScheduler
+    lr_schedule = hprotein.lr_decay_schedule(change_point=args.change_lr_epoch)
+    schedule = LearningRateScheduler(schedule=lr_schedule)
 
     # create the model
     model = hprotein.create_model(model_name=args.model_name)
-    use_multiprocessing = False
-    workers = 1
-
-    # TODO: add back multiprocessor conditionals
+    if args.gpu_count > 1:
+        model = multi_gpu_model(model, gpus=args.gpu_count)
+        use_multiprocessing = True
+        workers = args.gpu_count * 2
+    elif args.gpu_count == 1:
+        use_multiprocessing = True
+        workers = args.gpu_count * 4
+    else:
+        use_multiprocessing = False
+        workers = 1
 
     if hprotein.text_to_bool(args.run_training):
         # primary training run
@@ -165,7 +177,7 @@ def run_training(args):
                                    use_multiprocessing=use_multiprocessing,
                                    workers=workers,
                                    verbose=1,
-                                   callbacks=[checkpoint])
+                                   callbacks=[checkpoint, schedule])
 
     logging.info("Start of fine tune training...")
     if hprotein.text_to_bool(args.run_fine_tune):
@@ -237,20 +249,13 @@ def run_eval(args):
     logging.info('Starting run_eval...')
 
     # get the validation set
-    #df_valid = pd.read_csv(args.val_csv)
-    #validation_set = df_valid.values.tolist()
-    #validation_set = [item for sublist in validation_set for item in sublist]
+    df_valid = pd.read_csv(args.val_csv)
+    validation_set = df_valid.values.tolist()
+    validation_set = [item for sublist in validation_set for item in sublist]
 
     # load the data
-    #val_specimen_ids, val_labels = hprotein.get_data(args.train_folder, args.label_folder, mode='validate',
-    #                                                 filter_ids=validation_set)
-    specimen_ids, labels = hprotein.get_data(args.label_folder, args.label_list, mode='train')
-
-    # delete after confirming accuracy
-    lastTrainIndex = int((1 - 0.1) * specimen_ids.shape[0])
-    val_specimen_ids = specimen_ids[lastTrainIndex:]
-    val_labels = labels[lastTrainIndex:]
-
+    val_specimen_ids, val_labels = hprotein.get_data(args.label_folder, args.label_list, mode='validate',
+                                                     filter_ids=validation_set)
     # create data generator
     logging.info('Creating Hprotein validation data generator...')
     val_generator = hprotein.HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels,
@@ -263,7 +268,7 @@ def run_eval(args):
 
     # eval fine tune model
     logging.info('Loading fine tuned training model...')
-    model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+    model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
                        custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1})
     model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
 
@@ -292,8 +297,7 @@ def run_predict(args):
 
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
-    predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test',
-                                                           filter_ids=[])
+    predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
     predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
                                                        model_name=args.model_name)
 
@@ -331,41 +335,6 @@ def run_predict(args):
 
     # write out the csv
     submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
-
-    '''
-    from tqdm import tqdm
-    pathsTest = predict_set_sids
-    labelsTest = predict_set_lbls
-    bestModel = final_model
-    BATCH_SIZE = predict_generator.batch_size
-    T = max_thresholds_matrix
-
-    testg = predict_generator
-    submit = pd.read_csv('stage1_submit/sample_submission.csv')
-    P = np.zeros((pathsTest.shape[0], 28))
-    for i in tqdm(range(len(testg))):
-        images, labels = testg[i]
-        score = bestModel.predict(images)
-        P[i * BATCH_SIZE:i * BATCH_SIZE + score.shape[0]] = score
-
-    PP = np.array(P)
-
-    prediction = []
-
-    for row in tqdm(range(submit.shape[0])):
-
-        str_label = ''
-
-        for col in range(PP.shape[1]):
-            if (PP[row, col] < T[col]):
-                str_label += ''
-            else:
-                str_label += str(col) + ' '
-        prediction.append(str_label.strip())
-
-    submit['Predicted'] = np.array(prediction)
-    submit.to_csv('new_testy_tester.csv', index=False)
-    '''
 
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 
