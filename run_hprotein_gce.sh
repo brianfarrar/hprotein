@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 python3 task.py \
     --run_training="True" \
-    --batch_size=16 \
-    --epochs=30 \
+    --batch_size=32 \
+    --epochs=25 \
     --change_lr_epoch=21 \
     --run_fine_tune="True" \
     --fine_tune_epochs=1 \
-    --gpu_count=8 \
+    --gpu_count=1 \
     --run_eval="True" \
     --val_set="val_set.csv" \
     --run_predict="True" \
     --new_model="True" \
-    --model_name="gap_net_bn_relu" \
+    --model_name="InceptionV2Resnet" \
     --model_label="model" \
     --model_folder="models" \
     --train_folder="stage1_train" \
