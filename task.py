@@ -153,7 +153,6 @@ def run_training(args):
     # create the model
     model = hprotein.create_model(model_name=args.model_name)
     if args.gpu_count > 1:
-        logging.info('Got Here!!!!!')
         model = multi_gpu_model(model, gpus=args.gpu_count)
         use_multiprocessing = True
         workers = args.gpu_count * 2
@@ -309,7 +308,11 @@ def run_predict(args):
     submit = pd.read_csv('{}/{}'.format(args.submission_folder, args.submission_list))
 
     # create an empty array to catch the predictions
-    predictions = np.zeros((predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
+    if args.gpu_count > 1:
+        # keras multigpu models require all batches in the prediction run to be full, so we pad for the last batch
+        predictions = np.zeros((predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
+    else:
+        predictions = np.zeros((predict_set_sids.shape[0], 28))
 
     # get the predictions
     logging.info('Making predictions...')
@@ -318,18 +321,21 @@ def run_predict(args):
 
         # if the last batch is not full append blank rows
         if images.shape[0] < predict_generator.batch_size:
-            blank_rows = np.zeros((predict_generator.last_batch_padding,
-                                   predict_generator.shape[0],
-                                   predict_generator.shape[1],
-                                   predict_generator.shape[2]))
-            images = np.append(images, blank_rows, axis=0)
+            if args.gpu_count > 1:
+                blank_rows = np.zeros((predict_generator.last_batch_padding,
+                                       predict_generator.shape[0],
+                                       predict_generator.shape[1],
+                                       predict_generator.shape[2]))
+                images = np.append(images, blank_rows, axis=0)
 
         score = final_model.predict(images)
         predictions[i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
 
     # drop the blank rows
-    if predict_generator.last_batch_padding > 0:
-        predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
+    if args.gpu_count > 1:
+        # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
+        if images.shape[0] < predict_generator.batch_size:
+            predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
 
     # convert the predictions into the submission file format
     logging.info('Converting to submission format...')
