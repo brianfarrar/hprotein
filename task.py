@@ -29,6 +29,9 @@ def run(argv=None):
     parser.add_argument('--epochs', dest='epochs', default=10, type=int,
                         help='Number of epochs')
 
+    parser.add_argument('--steps_per_epoch', dest='steps_per_epoch', default=10, type=int,
+                        help='Number of epochs')
+
     parser.add_argument('--change_lr_epoch', dest='change_lr_epoch', default=16, type=int,
                         help='Epoch to reduce learning rate')
 
@@ -37,6 +40,9 @@ def run(argv=None):
 
     parser.add_argument('--fine_tune_epochs', dest='fine_tune_epochs', default=3, type=int,
                         help='Number of epochs to fine tune')
+
+    parser.add_argument('--loss_function', dest='loss_function', default='focal_loss',
+                        help='Which loss function to use for the run')
 
     parser.add_argument('--gpu_count', dest='gpu_count', default=1, type=int,
                         help='Number of epochs')
@@ -94,6 +100,8 @@ def run(argv=None):
         unique_id = str(uuid.uuid4())[-6:]
         logging.info('New model number -> {}'.format(unique_id))
         args.model_label = '{}_{}'.format(args.model_label, unique_id)
+    else:
+        logging.info('Continuing training for model: {}'.format(args.model_label))
 
     if hprotein.text_to_bool(args.run_training) or hprotein.text_to_bool(args.run_fine_tune):
         run_training(args)
@@ -150,10 +158,8 @@ def run_training(args):
     lr_schedule = hprotein.lr_decay_schedule(change_point=args.change_lr_epoch)
     schedule = LearningRateScheduler(schedule=lr_schedule)
 
-    # create the model
-    model = hprotein.create_model(model_name=args.model_name)
+    # configure trainier options for the environment
     if args.gpu_count > 1:
-        model = multi_gpu_model(model, gpus=args.gpu_count)
         use_multiprocessing = True
         workers = args.gpu_count * 2
     elif args.gpu_count == 1:
@@ -163,14 +169,41 @@ def run_training(args):
         use_multiprocessing = False
         workers = 1
 
+    # create or load the model
+    if hprotein.text_to_bool(args.new_model):
+        model = hprotein.create_model(model_name=args.model_name)
+        if args.gpu_count > 1:
+            model = multi_gpu_model(model, gpus=args.gpu_count)
+    else:
+        if args.loss_function == 'binary_crossentropy':
+            model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                               custom_objects={'f1': hprotein.f1})
+        elif args.loss_function == 'focal_loss':
+            model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                               custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
+
+
+    # compile model with desired loss function
+    if args.loss_function == 'focal_loss':
+        loss =  hprotein.focal_loss
+    elif args.loss_function == 'binary_crossentropy':
+        loss = args.loss_function
+
+
     if hprotein.text_to_bool(args.run_training):
         # primary training run
-        model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
+
+        #model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
+        model.compile(loss=loss, optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
         model.summary()
+
+        # if steps per epoch is not chosen at launch, then set it to the length of the full data set
+        if args.steps_per_epoch == -1:
+            args.steps_per_epoch = len(training_generator)
 
         logging.info("Start of primary training...")
         hist = model.fit_generator(training_generator,
-                                   steps_per_epoch=len(training_generator),
+                                   steps_per_epoch=args.steps_per_epoch,
                                    validation_data=val_generator,
                                    validation_steps=8,
                                    epochs=args.epochs,
@@ -224,10 +257,15 @@ def run_training(args):
         else:
             logging.warning('Fine tuning not supported for model name: {}'.format(args.model_name))
 
-        model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+        # compile model with desired loss function
+        if args.loss_function == 'binary_crossentropy':
+            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+        elif args.loss_function == 'focal_loss':
+            model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+
         model.summary()
         fths = model.fit_generator(training_generator,
-                                   steps_per_epoch=len(training_generator),
+                                   steps_per_epoch=args.steps_per_epoch,
                                    validation_data=val_generator,
                                    validation_steps=8,
                                    epochs=args.fine_tune_epochs,
@@ -263,13 +301,26 @@ def run_eval(args):
 
     # eval primary model
     logging.info('Loading primary training model...')
-    model = load_model('{}/{}.model'.format(args.model_folder, args.model_label), custom_objects={'f1': hprotein.f1})
+    if args.loss_function == 'binary_crossentropy':
+        model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                           custom_objects={'f1': hprotein.f1})
+    elif args.loss_function == 'focal_loss':
+        model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                           custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
+
     model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
 
     # eval fine tune model
     logging.info('Loading fine tuned training model...')
-    model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
-                       custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1})
+
+    if args.loss_function == 'binary_crossentropy':
+        model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+                           custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1})
+    elif args.loss_function == 'focal_loss':
+        model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+                           custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1,
+                                           'focal_loss': hprotein.focal_loss})
+
     model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
 
     if model1_macro_f1 > model2_macro_f1:

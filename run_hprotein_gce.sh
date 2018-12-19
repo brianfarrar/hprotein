@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="False" \
+    --run_training="True" \
     --batch_size=32 \
-    --epochs=25 \
-    --change_lr_epoch=21 \
-    --run_fine_tune="False" \
-    --fine_tune_epochs=1 \
+    --epochs=6 \
+    --steps_per_epoch=-1 \
+    --change_lr_epoch=1 \
+    --run_fine_tune="True" \
+    --fine_tune_epochs=2 \
+    --loss_function="focal_loss" \
     --gpu_count=1 \
     --run_eval="True" \
     --val_set="val_set.csv" \
     --run_predict="True" \
-    --new_model="False" \
-    --model_name="InceptionV2Resnet" \
-    --model_label="model_a8b442" \
+    --new_model="True" \
+    --model_name="gap_net_bn_relu" \
+    --model_label="model_" \
     --model_folder="models" \
     --train_folder="stage1_train" \
     --label_folder="stage1_labels" \

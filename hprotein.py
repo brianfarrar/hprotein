@@ -330,6 +330,25 @@ def f1_loss(y_true, y_pred):
 
     return 1 - K.mean(f)
 
+# --------------------------------
+# focal loss
+# --------------------------------
+def focal_loss(y_true, y_pred, gamma=2):
+
+    # transform back to logits
+    _epsilon = tf.convert_to_tensor(K.epsilon(), y_pred.dtype.base_dtype)
+    y_pred = tf.clip_by_value(y_pred, _epsilon, 1 - _epsilon)
+    y_pred = tf.log(y_pred / (1 - y_pred))
+
+    input = tf.cast(y_pred, tf.float32)
+
+    max_val = K.clip(-input, 0, 1)
+    loss = input - input * y_true + max_val + K.log(K.exp(-max_val) + K.exp(-input - max_val))
+    invprobs = tf.log_sigmoid(-input * (y_true * 2.0 - 1.0))
+    loss = K.exp(invprobs * gamma) * loss
+
+    return K.mean(K.sum(loss, axis=1))
+
 
 # ------------------------------
 # create the model
@@ -607,7 +626,8 @@ def get_best_model(args):
 
         # load model
         logging.info('Loading model {}...'.format(args.model_label))
-        final_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label), custom_objects={'f1': f1})
+        final_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                 custom_objects={'f1': f1, 'focal_loss': focal_loss})
 
         # load thresholds
         max_thresholds_matrix = np.load('{}/{}_thresh.npy'.format(args.model_folder, args.model_label))
@@ -617,7 +637,7 @@ def get_best_model(args):
         # load model
         logging.info('Loading model {}_fine_tune...'.format(args.model_label))
         final_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
-                                 custom_objects={'f1': f1, 'f1_loss': f1_loss})
+                                 custom_objects={'f1': f1, 'f1_loss': f1_loss, 'focal_loss': focal_loss})
 
         # load thresholds
         max_thresholds_matrix = np.load('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label))
