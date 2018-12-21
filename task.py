@@ -35,6 +35,9 @@ def run(argv=None):
     parser.add_argument('--change_lr_epoch', dest='change_lr_epoch', default=16, type=int,
                         help='Epoch to reduce learning rate')
 
+    parser.add_argument('--use_class_weights', dest='use_class_weights', default='False',
+                        help='Text boolean to decide whether to use class weights in training')
+
     parser.add_argument('--run_fine_tune', dest='run_fine_tune', default='False',
                         help='Text boolean to decide wheter to run fine tuning step')
 
@@ -158,7 +161,8 @@ def run_training(args):
     lr_schedule = hprotein.lr_decay_schedule(change_point=args.change_lr_epoch)
     schedule = LearningRateScheduler(schedule=lr_schedule)
 
-    # configure trainier options for the environment
+
+    # configure trainer options for the environment
     if args.gpu_count > 1:
         use_multiprocessing = True
         workers = args.gpu_count * 2
@@ -169,11 +173,15 @@ def run_training(args):
         use_multiprocessing = False
         workers = 1
 
+    # create the base model
+    base_model = hprotein.create_model(model_name=args.model_name)
+
     # create or load the model
     if hprotein.text_to_bool(args.new_model):
-        model = hprotein.create_model(model_name=args.model_name)
         if args.gpu_count > 1:
-            model = multi_gpu_model(model, gpus=args.gpu_count)
+            model = multi_gpu_model(base_model, gpus=args.gpu_count)
+        else:
+            model = base_model
     else:
         if args.loss_function == 'binary_crossentropy':
             model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
@@ -182,24 +190,27 @@ def run_training(args):
             model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
                                custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
 
-
     # compile model with desired loss function
     if args.loss_function == 'focal_loss':
         loss =  hprotein.focal_loss
     elif args.loss_function == 'binary_crossentropy':
         loss = args.loss_function
 
+    # if steps per epoch is not chosen at launch, then set it to the length of the full data set
+    if args.steps_per_epoch == -1:
+        args.steps_per_epoch = len(training_generator)
+
+    # get class weights to deal with data imbalance
+    if(hprotein.text_to_bool(args.use_class_weights)):
+        _, cw = hprotein.create_class_weight(hprotein.labels_dict)
+    else:
+        cw = None
 
     if hprotein.text_to_bool(args.run_training):
-        # primary training run
 
-        #model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
+        # primary training run
         model.compile(loss=loss, optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
         model.summary()
-
-        # if steps per epoch is not chosen at launch, then set it to the length of the full data set
-        if args.steps_per_epoch == -1:
-            args.steps_per_epoch = len(training_generator)
 
         logging.info("Start of primary training...")
         hist = model.fit_generator(training_generator,
@@ -209,15 +220,21 @@ def run_training(args):
                                    epochs=args.epochs,
                                    use_multiprocessing=use_multiprocessing,
                                    workers=workers,
+                                   class_weight=cw,
                                    verbose=1,
                                    callbacks=[checkpoint, schedule])
 
     logging.info("Start of fine tune training...")
     if hprotein.text_to_bool(args.run_fine_tune):
 
+        # if we did not run training and are only fine tuning, load model
         if not hprotein.text_to_bool(args.run_training):
-            model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                               custom_objects={'f1': hprotein.f1})
+            if args.loss_function == 'binary_crossentropy':
+                model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                   custom_objects={'f1': hprotein.f1})
+            elif args.loss_function == 'focal_loss':
+                model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                   custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
 
         if args.model_name == 'gap_net_bn_relu':
 
@@ -225,16 +242,28 @@ def run_training(args):
                                          monitor='val_loss', verbose=1, save_best_only=True,
                                          save_weights_only=False, mode='min', period=1)
 
-            for layer in model.layers:
-                layer.trainable = False
+            if args.gpu_count > 1:
+                for layer in base_model.layers:
+                    layer.trainable = False
 
-            model.layers[-1].trainable = True
-            model.layers[-2].trainable = True
-            model.layers[-3].trainable = True
-            model.layers[-4].trainable = True
-            model.layers[-5].trainable = True
-            model.layers[-6].trainable = True
-            model.layers[-7].trainable = True
+                base_model.layers[-1].trainable = True
+                base_model.layers[-2].trainable = True
+                base_model.layers[-3].trainable = True
+                base_model.layers[-4].trainable = True
+                base_model.layers[-5].trainable = True
+                base_model.layers[-6].trainable = True
+                base_model.layers[-7].trainable = True
+            else:
+                for layer in model.layers:
+                    layer.trainable = False
+
+                model.layers[-1].trainable = True
+                model.layers[-2].trainable = True
+                model.layers[-3].trainable = True
+                model.layers[-4].trainable = True
+                model.layers[-5].trainable = True
+                model.layers[-6].trainable = True
+                model.layers[-7].trainable = True
 
         elif args.model_name == 'InceptionV2Resnet':
 
@@ -272,6 +301,7 @@ def run_training(args):
                                    use_multiprocessing=use_multiprocessing,
                                    max_queue_size=4,
                                    workers=workers,
+                                   class_weight=cw,
                                    verbose=1,
                                    callbacks=[checkpoint])
 

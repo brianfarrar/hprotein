@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+import math
 
 from tqdm import tqdm
 
@@ -581,37 +582,6 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     return max_fscore_thresholds, macro_f1
 
 
-def xget_max_fscore_matrix(mdl, fullValGen, save_eval=False):
-    lastFullValPred = np.empty((0, 28))
-    lastFullValLabels = np.empty((0, 28))
-    for i in tqdm(range(len(fullValGen))):
-        im, lbl = fullValGen[i]
-        scores = mdl.predict(im)
-        lastFullValPred = np.append(lastFullValPred, scores, axis=0)
-        lastFullValLabels = np.append(lastFullValLabels, lbl, axis=0)
-    print(lastFullValPred.shape, lastFullValLabels.shape)
-
-    rng = np.arange(0, 1, 0.001)
-    f1s = np.zeros((rng.shape[0], 28))
-    for j, t in enumerate(tqdm(rng)):
-        for i in range(28):
-            p = np.array(lastFullValPred[:, i] > t, dtype=np.int8)
-            # scoref1 = K.eval(f1_score(fullValLabels[:,i], p, average='binary'))
-            scoref1 = off1(lastFullValLabels[:, i], p, average='binary')
-            f1s[j, i] = scoref1
-
-    print(np.max(f1s, axis=0))
-    print(np.mean(np.max(f1s, axis=0)))
-
-    T = np.empty(28)
-    for i in range(28):
-        T[i] = rng[np.where(f1s[:, i] == np.max(f1s[:, i]))[0][0]]
-    # print('Choosing threshold: ', T, ', validation F1-score: ', max(f1s))
-    print(T)
-
-    return T, np.mean(np.max(f1s, axis=0))
-
-
 # ----------------------------------------------------
 # Returns the best model and fscore matrix from disk
 # ----------------------------------------------------
@@ -689,7 +659,9 @@ def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding
 
     submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_label), index=False)
 
-
+# ----------------------------------------------
+# writes out an eval file for analysis
+# ----------------------------------------------
 def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds):
 
     # get the labels for all specimen_ids
@@ -736,3 +708,54 @@ def lr_decay_schedule(change_point=15):
         return lr
 
     return schedule
+
+
+# --------------------------------------------
+# create class weights
+# --------------------------------------------
+def create_class_weight(labels_dict, mu=0.5):
+    total = np.sum(list(labels_dict.values()))
+    keys = labels_dict.keys()
+    class_weight = dict()
+    class_weight_log = dict()
+
+    for key in keys:
+        score = total / float(labels_dict[key])
+        score_log = math.log(mu * total / float(labels_dict[key]))
+        class_weight[key] = round(score, 2) if score > 1.0 else round(1.0, 2)
+        class_weight_log[key] = round(score_log, 2) if score_log > 1.0 else round(1.0, 2)
+
+    return class_weight, class_weight_log
+
+
+# Class abundance for protein dataset
+labels_dict = {
+    0: 12885,
+    1: 1254,
+    2: 3621,
+    3: 1561,
+    4: 1858,
+    5: 2513,
+    6: 1008,
+    7: 2822,
+    8: 53,
+    9: 45,
+    10: 28,
+    11: 1093,
+    12: 688,
+    13: 537,
+    14: 1066,
+    15: 21,
+    16: 530,
+    17: 210,
+    18: 902,
+    19: 1482,
+    20: 172,
+    21: 3777,
+    22: 802,
+    23: 2965,
+    24: 322,
+    25: 8228,
+    26: 328,
+    27: 11
+}
