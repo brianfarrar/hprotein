@@ -271,16 +271,28 @@ def run_training(args):
                                          monitor='val_loss', verbose=1, save_best_only=True,
                                          save_weights_only=False, mode='min', period=1)
 
-            for layer in model.layers:
-                layer.trainable = False
+            if args.gpu_count > 1:
+                for layer in base_model.layers:
+                    layer.trainable = False
 
-            model.layers[-3].trainable = True
-            model.layers[-4].trainable = True
-            model.layers[-5].trainable = True
-            model.layers[-6].trainable = True
-            model.layers[-7].trainable = True
-            model.layers[-8].trainable = True
-            model.layers[-9].trainable = True
+                base_model.layers[-3].trainable = True
+                base_model.layers[-4].trainable = True
+                base_model.layers[-5].trainable = True
+                base_model.layers[-6].trainable = True
+                base_model.layers[-7].trainable = True
+                base_model.layers[-8].trainable = True
+                base_model.layers[-9].trainable = True
+            else:
+                for layer in model.layers:
+                    layer.trainable = False
+
+                model.layers[-3].trainable = True
+                model.layers[-4].trainable = True
+                model.layers[-5].trainable = True
+                model.layers[-6].trainable = True
+                model.layers[-7].trainable = True
+                model.layers[-8].trainable = True
+                model.layers[-9].trainable = True
 
 
         else:
