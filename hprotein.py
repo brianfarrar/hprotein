@@ -759,3 +759,41 @@ labels_dict = {
     26: 328,
     27: 11
 }
+
+
+# -------------------------------------------------------------
+# get_val_generator returns a prepared validation generator
+# -------------------------------------------------------------
+def get_val_generator(args):
+
+    # get the validation set
+    df_valid = pd.read_csv(args.val_csv)
+    validation_set = df_valid.values.tolist()
+    validation_set = [item for sublist in validation_set for item in sublist]
+
+    val_specimen_ids, val_labels = get_data(args.label_folder, args.label_list, mode='validate',
+                                            filter_ids=validation_set)
+
+    logging.info('Creating Hprotein validation data generator...')
+    val_generator = HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels,
+                                          model_name=args.model_name)
+
+    return validation_set, val_generator
+
+
+# -------------------------------------------------------------
+# get_train_generator returns a prepared training generator
+# -------------------------------------------------------------
+def get_train_generator(args, validation_set):
+
+    # load the data
+    specimen_ids, labels = get_data(args.label_folder, args.label_list, mode='train', filter_ids=validation_set)
+
+    # create data generators
+    logging.info('Creating Hprotein training data generator...')
+    training_generator = HproteinDataGenerator(args, args.train_folder, specimen_ids, labels,
+                                               model_name=args.model_name,
+                                               shuffle=True,
+                                               augment=True)
+
+    return training_generator

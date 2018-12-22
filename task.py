@@ -29,7 +29,7 @@ def run(argv=None):
     parser.add_argument('--epochs', dest='epochs', default=10, type=int,
                         help='Number of epochs')
 
-    parser.add_argument('--steps_per_epoch', dest='steps_per_epoch', default=10, type=int,
+    parser.add_argument('--steps_per_epoch', dest='steps_per_epoch', default=-1, type=int,
                         help='Number of epochs')
 
     parser.add_argument('--change_lr_epoch', dest='change_lr_epoch', default=16, type=int,
@@ -55,9 +55,6 @@ def run(argv=None):
 
     parser.add_argument('--val_csv', dest='val_csv', default='val_set.csv',
                         help='Model to run.')
-
-    parser.add_argument('--validation_steps', dest='validation_steps', default=10, type=int,
-                        help='Number of validation_steps')
 
     parser.add_argument('--run_predict', dest='run_predict', default='True',
                         help='Text boolean to decide whether to run predict')
@@ -124,43 +121,18 @@ def run_training(args):
     # Log start of training process
     logging.info('Starting run_training...')
 
-    # get the validation set
-    df_valid = pd.read_csv(args.val_csv)
-    validation_set = df_valid.values.tolist()
-    validation_set = [item for sublist in validation_set for item in sublist]
+    # Get validation and training image generators
+    validation_set, val_generator = hprotein.get_val_generator(args)
+    training_generator = hprotein.get_train_generator(args, validation_set)
 
-    # load the data
-    specimen_ids, labels = hprotein.get_data(args.label_folder, args.label_list, mode='train',
-                                             filter_ids=validation_set)
-
-    val_specimen_ids, val_labels = hprotein.get_data(args.label_folder, args.label_list, mode='validate',
-                                                     filter_ids=validation_set)
-
-    # create data generators
-    logging.info('Creating Hprotein training data generator...')
-    training_generator = hprotein.HproteinDataGenerator(args,
-                                                        args.train_folder,
-                                                        specimen_ids,
-                                                        labels,
-                                                        model_name=args.model_name,
-                                                        shuffle=True,
-                                                        augment=True)
-
-    logging.info('Creating Hprotein validation data generator...')
-    val_generator = hprotein.HproteinDataGenerator(args,
-                                                   args.train_folder,
-                                                   val_specimen_ids,
-                                                   val_labels,
-                                                   model_name=args.model_name)
-
-    # create callbacks
+    # define check point call back
     checkpoint = ModelCheckpoint('{}/{}.model'.format(args.model_folder, args.model_label),
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
 
+    # define learning rate schedule callback
     lr_schedule = hprotein.lr_decay_schedule(change_point=args.change_lr_epoch)
     schedule = LearningRateScheduler(schedule=lr_schedule)
-
 
     # configure trainer options for the environment
     if args.gpu_count > 1:
@@ -172,6 +144,16 @@ def run_training(args):
     else:
         use_multiprocessing = False
         workers = 1
+
+    # if steps per epoch is not chosen at launch, then set it to the length of the full data set
+    if args.steps_per_epoch == -1:
+        args.steps_per_epoch = len(training_generator)
+
+    # get class weights to deal with data imbalance
+    if hprotein.text_to_bool(args.use_class_weights):
+        _, cw = hprotein.create_class_weight(hprotein.labels_dict)
+    else:
+        cw = None
 
     # create the base model
     base_model = hprotein.create_model(model_name=args.model_name)
@@ -192,19 +174,9 @@ def run_training(args):
 
     # compile model with desired loss function
     if args.loss_function == 'focal_loss':
-        loss =  hprotein.focal_loss
+        loss = hprotein.focal_loss
     elif args.loss_function == 'binary_crossentropy':
         loss = args.loss_function
-
-    # if steps per epoch is not chosen at launch, then set it to the length of the full data set
-    if args.steps_per_epoch == -1:
-        args.steps_per_epoch = len(training_generator)
-
-    # get class weights to deal with data imbalance
-    if(hprotein.text_to_bool(args.use_class_weights)):
-        _, cw = hprotein.create_class_weight(hprotein.labels_dict)
-    else:
-        cw = None
 
     if hprotein.text_to_bool(args.run_training):
 
@@ -305,6 +277,7 @@ def run_training(args):
             model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
 
         model.summary()
+
         fths = model.fit_generator(training_generator,
                                    steps_per_epoch=args.steps_per_epoch,
                                    validation_data=val_generator,
@@ -317,7 +290,6 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint])
 
-    return val_specimen_ids, val_labels
 
 
 # ---------------------------------
@@ -328,18 +300,10 @@ def run_eval(args):
     # Log start of eval process
     logging.info('Starting run_eval...')
 
-    # get the validation set
-    df_valid = pd.read_csv(args.val_csv)
-    validation_set = df_valid.values.tolist()
-    validation_set = [item for sublist in validation_set for item in sublist]
-
-    # load the data
-    val_specimen_ids, val_labels = hprotein.get_data(args.label_folder, args.label_list, mode='validate',
-                                                     filter_ids=validation_set)
     # create data generator
     logging.info('Creating Hprotein validation data generator...')
-    val_generator = hprotein.HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels,
-                                                   model_name=args.model_name)
+    # Get validation and training image generators
+    _, val_generator = hprotein.get_val_generator(args)
 
     # eval primary model
     logging.info('Loading primary training model...')

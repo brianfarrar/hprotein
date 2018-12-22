@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="True" \
+    --run_training="False" \
     --batch_size=64 \
-    --epochs=20 \
+    --epochs=30 \
     --steps_per_epoch=-1 \
-    --change_lr_epoch=11 \
+    --change_lr_epoch=21 \
     --use_class_weights="False" \
     --run_fine_tune="True" \
     --fine_tune_epochs=2 \
@@ -14,8 +14,8 @@ python3 task.py \
     --val_set="val_set_combo.csv" \
     --run_predict="True" \
     --new_model="False" \
-    --model_name="gap_net_bn_relu" \
-    --model_label="model_573537_run3" \
+    --model_name="InceptionV2Resnet" \
+    --model_label="model_11d1e6" \
     --model_folder="models" \
     --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \
