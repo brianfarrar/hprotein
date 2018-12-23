@@ -21,11 +21,17 @@ def run(argv=None):
     parser.add_argument('--ensemble_name', dest='ensemble_name', default='ensemble',
                         help='Network to run.')
 
+    parser.add_argument('--ensemble_csv', dest='ensemble_csv', default='ensemble_models',
+                        help='Folder containing the models to ensemble')
+
     parser.add_argument('--batch_size', dest='batch_size', default=32, type=int,
                         help='Number of examples per batch')
 
     parser.add_argument('--use_class_weights', dest='use_class_weights', default='False',
                         help='Text boolean to decide whether to use class weights in training')
+
+    parser.add_argument('--val_csv', dest='val_csv', default='val_set.csv',
+                        help='CSV with the validation set info.')
 
     parser.add_argument('--model_name', dest='model_name', default='gap_net_bn_relu',
                         help='Network to run.')
@@ -63,3 +69,37 @@ def run(argv=None):
     logging.info('Ensemble -> {}'.format(unique_id))
     args.ensemble_name = '{}_{}'.format(args.ensemble_name, unique_id)
 
+    # get validation generator
+    _, val_generator = hprotein.get_val_generator(args)
+
+    # get model list
+    model_list = hprotein.get_model_list(args)
+
+    for m in model_list:
+
+        if args.loss_function == 'binary_crossentropy':
+            base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                    custom_objects={'f1': hprotein.f1})
+        elif args.loss_function == 'focal_loss':
+            base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                    custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
+
+        if m[1] == 'binary_crossentropy':
+            model = load_model('{}/{}.model'.format(args.model_folder, m[0]), custom_objects={'f1': hprotein.f1})
+        elif m[1] == 'focal_loss':
+            model = load_model('{}/{}.model'.format(args.model_folder, m[0]),
+                               custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
+
+
+
+
+# ---------------------------------
+# main runner
+# ---------------------------------
+def main():
+    logging.getLogger().setLevel(logging.INFO)
+    run()
+
+
+if __name__ == '__main__':
+    main()

@@ -659,6 +659,7 @@ def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding
 
     submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_label), index=False)
 
+
 # ----------------------------------------------
 # writes out an eval file for analysis
 # ----------------------------------------------
@@ -797,3 +798,14 @@ def get_train_generator(args, validation_set):
                                                augment=True)
 
     return training_generator
+
+
+# -------------------------------------------------------------
+# Returns a list of the models to ensemble
+# -------------------------------------------------------------
+def get_model_list(args):
+
+    df_model_list = pd.read_csv(args.ensemble_csv)
+    model_list = df_model_list.values.tolist()
+
+    return model_list

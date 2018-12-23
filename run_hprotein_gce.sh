@@ -2,20 +2,20 @@
 python3 task.py \
     --run_training="False" \
     --batch_size=64 \
-    --epochs=30 \
+    --epochs=1 \
     --steps_per_epoch=-1 \
     --change_lr_epoch=21 \
     --use_class_weights="False" \
     --run_fine_tune="True" \
-    --fine_tune_epochs=2 \
+    --fine_tune_epochs=1 \
     --loss_function="focal_loss" \
     --gpu_count=2 \
     --run_eval="True" \
-    --val_set="val_set_combo.csv" \
+    --val_csv="val_set_combo.csv" \
     --run_predict="True" \
     --new_model="False" \
     --model_name="InceptionV2Resnet" \
-    --model_label="model_11d1e6" \
+    --model_label="model_cd5f99" \
     --model_folder="models" \
     --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \
