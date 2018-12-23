@@ -119,7 +119,7 @@ def run(argv=None):
 def run_training(args):
 
     # Log start of training process
-    logging.info('Starting run_training...')
+    logging.info('Configuring training and fine tuning options...')
 
     # Get validation and training image generators
     validation_set, val_generator = hprotein.get_val_generator(args)
@@ -154,6 +154,10 @@ def run_training(args):
         _, cw = hprotein.create_class_weight(hprotein.labels_dict)
     else:
         cw = None
+
+    #
+    # Start of training cycle
+    #
 
     if hprotein.text_to_bool(args.run_training):
 
@@ -200,6 +204,10 @@ def run_training(args):
         if args.gpu_count > 1 and args.model_name == 'InceptionV2Resnet':
             base_model.save('{}/{}.model'.format(args.model_folder, args.model_label))
 
+    #
+    # Start of fine tune cycle
+    #
+
     if hprotein.text_to_bool(args.run_fine_tune):
 
         logging.info("Start of fine tune training...")
@@ -232,52 +240,35 @@ def run_training(args):
         if args.model_name == 'gap_net_bn_relu':
 
             if args.gpu_count > 1:
-                for layer in base_model.layers:
-                    layer.trainable = False
-
-                base_model.layers[-1].trainable = True
-                base_model.layers[-2].trainable = True
-                base_model.layers[-3].trainable = True
-                base_model.layers[-4].trainable = True
-                base_model.layers[-5].trainable = True
-                base_model.layers[-6].trainable = True
-                base_model.layers[-7].trainable = True
+                first_layer = -1
+                last_layer = -7
+                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
             else:
-                for layer in model.layers:
-                    layer.trainable = False
-
-                model.layers[-1].trainable = True
-                model.layers[-2].trainable = True
-                model.layers[-3].trainable = True
-                model.layers[-4].trainable = True
-                model.layers[-5].trainable = True
-                model.layers[-6].trainable = True
-                model.layers[-7].trainable = True
+                first_layer = -1
+                last_layer = -7
+                model = hprotein.freeze_layers(model, first_layer, last_layer)
 
         elif args.model_name == 'InceptionV2Resnet':
 
             if args.gpu_count > 1:
-                for layer in base_model.layers:
-                    layer.trainable = False
-
-                base_model.layers[-3].trainable = True
-                base_model.layers[-4].trainable = True
-                base_model.layers[-5].trainable = True
-                base_model.layers[-6].trainable = True
-                base_model.layers[-7].trainable = True
-                base_model.layers[-8].trainable = True
-                base_model.layers[-9].trainable = True
+                first_layer = -3
+                last_layer = -9
+                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
             else:
-                for layer in model.layers:
-                    layer.trainable = False
+                first_layer = -3
+                last_layer = -9
+                model = hprotein.freeze_layers(model, first_layer, last_layer)
 
-                model.layers[-3].trainable = True
-                model.layers[-4].trainable = True
-                model.layers[-5].trainable = True
-                model.layers[-6].trainable = True
-                model.layers[-7].trainable = True
-                model.layers[-8].trainable = True
-                model.layers[-9].trainable = True
+        elif args.model_name == 'ResNet50':
+
+            if args.gpu_count > 1:
+                first_layer = -3
+                last_layer = -9
+                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
+            else:
+                first_layer = -3
+                last_layer = -9
+                model = hprotein.freeze_layers(model, first_layer, last_layer)
 
         else:
             logging.warning('Fine tuning not supported for model name: {}'.format(args.model_name))

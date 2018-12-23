@@ -19,17 +19,11 @@ from keras.layers import Activation, Dropout, Flatten, Dense, Input, Conv2D, Max
                          Concatenate, ReLU, GlobalAveragePooling2D
 
 from keras.models import Model
-from keras.applications import InceptionResNetV2
+from keras.applications import InceptionResNetV2, ResNet50
 from keras.layers.noise import AlphaDropout
 from keras.models import load_model
 
-#from sklearn.metrics import f1_score as off1
 from sklearn.metrics import f1_score
-
-import warnings
-warnings.filterwarnings("ignore",
-                        message="F-score is ill-defined and being set to 0.0 due to no true samples.")
-
 
 import imgaug as ia
 from imgaug import augmenters as iaa
@@ -146,6 +140,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # shape of features
         if model_name == 'InceptionV2Resnet':
             self.shape = (299, 299, 3)
+        elif model_name == 'ResNet50':
+            self.shape = (224, 224, 3)
         else:
             self.shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -191,7 +187,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
-        if self.model_name == 'InceptionV2Resnet':
+        if self.model_name in ['InceptionV2Resnet','ResNet50']:
             image = cv2.resize(image, (self.shape[0], self.shape[1]))
 
         return image
@@ -359,6 +355,8 @@ def create_model(model_name='basic_cnn'):
     # determine the input shape
     if model_name == 'InceptionV2Resnet':
         input_shape = (299, 299, 3)
+    elif model_name == 'ResNet50':
+        input_shape = (224, 224, 3)
     else:
         input_shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -508,7 +506,7 @@ def create_model(model_name='basic_cnn'):
 
     elif model_name == 'InceptionV2Resnet':
 
-        drop_rate = 0.25
+        drop_rate = 0.5
 
         base_model = InceptionResNetV2(include_top=False, weights='imagenet', input_shape=input_shape)
 
@@ -517,11 +515,29 @@ def create_model(model_name='basic_cnn'):
 
         x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
         x = Flatten()(x)
-        x = Dropout(0.5)(x)
+        x = Dropout(drop_rate)(x)
         x = Dense(512, activation='relu')(x)
-        x = Dropout(0.5)(x)
+        x = Dropout(drop_rate)(x)
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
+
+    elif model_name == 'ResNet50':
+
+        drop_rate = 0.5
+
+        base_model = ResNet50(include_top=False, weights='imagenet', input_shape=input_shape)
+
+        x = BatchNormalization(axis=-1)(init)
+        x = base_model(x)
+
+        x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
+        x = Flatten()(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(512, activation='relu')(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(28)(x)
+        x = Activation('sigmoid')(x)
+
     else:
         logging.info('Bad model name: {}'.format(model_name))
 
@@ -809,3 +825,17 @@ def get_model_list(args):
     model_list = df_model_list.values.tolist()
 
     return model_list
+
+
+# -------------------------------------------------------------
+# Freezes layers of a model for fine tuning
+# -------------------------------------------------------------
+def freeze_layers(model, first_layer, last_layer):
+
+    for layer in model.layers:
+        layer.trainable = False
+
+    for i in range(first_layer, last_layer + 1, -1):
+        model.layers[i].trainable = True
+
+    return model

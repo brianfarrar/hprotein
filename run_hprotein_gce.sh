@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="False" \
-    --batch_size=64 \
-    --epochs=1 \
+    --run_training="True" \
+    --batch_size=128 \
+    --epochs=30 \
     --steps_per_epoch=-1 \
     --change_lr_epoch=21 \
     --use_class_weights="False" \
     --run_fine_tune="True" \
-    --fine_tune_epochs=1 \
+    --fine_tune_epochs=2 \
     --loss_function="focal_loss" \
-    --gpu_count=2 \
+    --gpu_count=4 \
     --run_eval="True" \
     --val_csv="val_set_combo.csv" \
     --run_predict="True" \
-    --new_model="False" \
-    --model_name="InceptionV2Resnet" \
-    --model_label="model_cd5f99" \
+    --new_model="True" \
+    --model_name="ResNet50" \
+    --model_label="model" \
     --model_folder="models" \
     --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \
