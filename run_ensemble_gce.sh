@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-python3 task.py \
+python3 ensemble.py \
     --ensemble_name="ensemble" \
     --ensemble_csv="ensemble_list.csv" \
     --batch_size=32 \

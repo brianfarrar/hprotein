@@ -196,7 +196,7 @@ def ensemble_predictions(args):
     for j, m in enumerate(model_list):
 
         # get the best model and related threshold matrix
-        model, max_thresholds_matrix = hprotein.get_best_model(args.model_folder, m[0])
+        model, _ = hprotein.get_best_model(args.model_folder, m[0])
 
         if args.gpu_count > 1:
             # compile model with desired loss function
@@ -238,8 +238,6 @@ def ensemble_predictions(args):
         # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
         if images.shape[0] < predict_generator.batch_size:
             final_predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
-
-    # thresholds
 
     # convert the predictions into the submission file format
     logging.info('Converting to submission format...')
