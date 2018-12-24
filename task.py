@@ -180,23 +180,7 @@ def run_training(args):
 
         # if this is a run on an existing model, then load and compile
         if not hprotein.text_to_bool(args.new_model):
-            if args.loss_function == 'binary_crossentropy':
-                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                        custom_objects={'f1': hprotein.f1})
-            elif args.loss_function == 'focal_loss':
-                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                        custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
-
-            if args.gpu_count > 1:
-                model = multi_gpu_model(base_model, gpus=args.gpu_count)
-            else:
-                model = base_model
-
-            # compile model with desired loss function
-            if args.loss_function == 'binary_crossentropy':
-                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
-            elif args.loss_function == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
+            model, base_model = hprotein.prepare_existing_model(args, lr=1e-3)
 
         model.summary()
 
@@ -229,55 +213,37 @@ def run_training(args):
 
         # if we did not run training and are only fine tuning, load model
         if not hprotein.text_to_bool(args.run_training):
-            if args.loss_function == 'binary_crossentropy':
-                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                        custom_objects={'f1': hprotein.f1})
-            elif args.loss_function == 'focal_loss':
-                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                        custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
-            if args.gpu_count > 1:
-                model = multi_gpu_model(base_model, gpus=args.gpu_count)
-            else:
-                model = base_model
-
-            # compile model with desired loss function
-            if args.loss_function == 'binary_crossentropy':
-                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-            elif args.loss_function == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            model, base_model = hprotein.prepare_existing_model(args, lr=1e-4)
 
         # freeze all layers except the fully connected layers
         if args.model_name == 'gap_net_bn_relu':
 
+            first_layer = -1
+            last_layer = -7
+
             if args.gpu_count > 1:
-                first_layer = -1
-                last_layer = -7
                 base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
             else:
-                first_layer = -1
-                last_layer = -7
                 model = hprotein.freeze_layers(model, first_layer, last_layer)
 
         elif args.model_name == 'InceptionV2Resnet':
 
+            first_layer = -3
+            last_layer = -9
+
             if args.gpu_count > 1:
-                first_layer = -3
-                last_layer = -9
                 base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
             else:
-                first_layer = -3
-                last_layer = -9
                 model = hprotein.freeze_layers(model, first_layer, last_layer)
 
         elif args.model_name == 'ResNet50':
 
+            first_layer = -3
+            last_layer = -9
+
             if args.gpu_count > 1:
-                first_layer = -3
-                last_layer = -9
                 base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
             else:
-                first_layer = -3
-                last_layer = -9
                 model = hprotein.freeze_layers(model, first_layer, last_layer)
 
         else:
@@ -323,49 +289,14 @@ def run_eval(args):
 
     # eval primary model
     logging.info('Loading primary training model...')
-    if args.loss_function == 'binary_crossentropy':
-        base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                custom_objects={'f1': hprotein.f1})
-    elif args.loss_function == 'focal_loss':
-        base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
-
-    if args.gpu_count > 1:
-        model = multi_gpu_model(base_model, gpus=args.gpu_count)
-    else:
-        model = base_model
-
-    # compile model with desired loss function
-    if args.loss_function == 'binary_crossentropy':
-        model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-    elif args.loss_function == 'focal_loss':
-        model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-
+    model, base_model = hprotein.prepare_existing_model(args, lr=1e-4)
     model.summary()
 
     model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
 
     # eval fine tune model
     logging.info('Loading fine tuned training model...')
-
-    if args.loss_function == 'binary_crossentropy':
-        base_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
-                                custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1})
-    elif args.loss_function == 'focal_loss':
-        base_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
-                                custom_objects={'f1_loss': hprotein.f1_loss, 'f1': hprotein.f1,
-                                                'focal_loss': hprotein.focal_loss})
-    if args.gpu_count > 1:
-        model = multi_gpu_model(base_model, gpus=args.gpu_count)
-    else:
-        model = base_model
-
-    # compile model with desired loss function
-    if args.loss_function == 'binary_crossentropy':
-        model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-    elif args.loss_function == 'focal_loss':
-        model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-
+    model, base_model = hprotein.prepare_existing_model(args, lr=1e-4, fine_tune=True)
     model.summary()
 
     model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)

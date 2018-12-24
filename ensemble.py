@@ -83,11 +83,104 @@ def ensemble_predictions(args):
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
     predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
-    predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
-                                                       model_name=args.model_name)
+
+    # get validation data generator
+    validation_set, val_generator = hprotein.get_val_generator(args)
 
     # get model list
     model_list = hprotein.get_model_list(args)
+
+    #
+    # Use validation data to calculate thresholds
+    #
+
+    # create an empty array to catch the validation predictions
+    if args.gpu_count > 1:
+        # keras multi gpu models require all batches in the prediction run to be full, so we pad for the last batch
+        val_predictions = np.zeros((len(model_list), len(validation_set) + val_generator.last_batch_padding, 28))
+        val_labels = np.zeros((len(model_list), len(validation_set) + val_generator.last_batch_padding, 28))
+    else:
+        val_predictions = np.zeros((len(model_list), len(validation_set), 28))
+        val_labels = np.zeros((len(model_list), len(validation_set), 28))
+
+    # loop through the validation data and make predictions
+    logging.info('Calculating ensembled thresholds...')
+    for j, m in enumerate(model_list):
+
+        model, _ = hprotein.get_best_model(args.model_folder, m[0])
+        model.summary()
+
+        if args.gpu_count > 1:
+            # compile model with desired loss function
+            if m[1] == 'binary_crossentropy':
+                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            elif m[1] == 'focal_loss':
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+
+        # get validation data generator
+        # get it each loop because the generator creates
+        # different data shapes depending upon the model
+        args.model_name = m[2]
+        validation_set, val_generator = hprotein.get_val_generator(args)
+
+        # get the validation predictions
+        logging.info('Making validation predictions...')
+        for i in tqdm(range(len(val_generator))):
+            images, labels = val_generator[i]
+
+            # if the last batch is not full append blank rows
+            if images.shape[0] < val_generator.batch_size:
+                if args.gpu_count > 1:
+                    blank_rows = np.zeros((val_generator.last_batch_padding,
+                                           val_generator.shape[0],
+                                           val_generator.shape[1],
+                                           val_generator.shape[2]))
+                    images = np.append(images, blank_rows, axis=0)
+
+            score = model.predict(images)
+            val_predictions[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = score
+            val_labels[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = labels
+
+    # get the mean of the predictions for the model
+    final_val_predictions = np.mean(val_predictions, axis=0)
+    final_val_labels = val_labels[0, 0:len(validation_set), :] # labels are the same so just need one set
+
+    # drop the blank rows
+    if args.gpu_count > 1:
+        # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
+        if images.shape[0] < val_generator.batch_size:
+            final_val_predictions = val_predictions[:, :val_predictions.shape[1] - val_generator.last_batch_padding]
+
+
+    # get a range between 0 and 1 by 1000ths
+    rng = np.arange(0, 1, 0.001)
+
+    # set up an array to catch individual fscores for each class
+    fscores = np.zeros((rng.shape[0], 28))
+
+    # loop through each prediction above the threshold and calculate the fscore
+    logging.info('Calculating f-scores at a range of thresholds...')
+    for j,k in enumerate(tqdm(rng)):
+        for i in range(28):
+            p = np.array(final_val_predictions[:,i]>k, dtype=np.int8)
+            score = hprotein.f1_score(final_val_labels[:,i], p, average='binary')
+            fscores[j,i] = score
+
+    # Make a matrix that will hold the best threshold for each class to maximize Fscore
+    max_thresholds_matrix = np.empty(28)
+    for i in range(28):
+        max_thresholds_matrix[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
+
+    macro_f1 = np.mean(np.max(fscores, axis=0))
+
+    logging.info('Probability threshold maximizing F1-score for each class:')
+    logging.info(max_thresholds_matrix)
+    logging.info('Macro F1 Score -> {}'.format(macro_f1))
+
+
+    #
+    # Get predictions
+    #
 
     # create an empty array to catch the predictions
     if args.gpu_count > 1:
@@ -115,6 +208,11 @@ def ensemble_predictions(args):
 
             model.summary()
 
+        args.model_name = m[2]
+        predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids,
+                                                           predict_set_lbls,
+                                                           model_name=args.model_name)
+
         # get the predictions
         logging.info('Making predictions...')
         for i in tqdm(range(len(predict_generator))):
@@ -132,6 +230,7 @@ def ensemble_predictions(args):
             score = model.predict(images)
             predictions[j, i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
 
+    # get the mean of the predictions for the model
     final_predictions = np.mean(predictions, axis=0)
 
     # drop the blank rows
@@ -158,11 +257,11 @@ def ensemble_predictions(args):
     submit['Predicted'] = np.array(prediction_str)
 
     # write out the csv
-    submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
+    submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name), index=False)
 
     # copy the submission file to gcs
-    hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
-                              'gs://hprotein/submission/submit_{}'.format(args.model_label))
+    hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name),
+                              'gs://hprotein/submission/submit_{}.csv'.format(args.ensemble_name))
 
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 

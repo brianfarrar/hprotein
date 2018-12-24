@@ -22,6 +22,8 @@ from keras.models import Model
 from keras.applications import InceptionResNetV2, ResNet50
 from keras.layers.noise import AlphaDropout
 from keras.models import load_model
+from keras.utils import multi_gpu_model
+from keras.optimizers import Adam
 
 from sklearn.metrics import f1_score
 
@@ -524,7 +526,7 @@ def create_model(model_name='basic_cnn'):
 
     elif model_name == 'ResNet50':
 
-        drop_rate = 0.5
+        drop_rate = 0.25
 
         base_model = ResNet50(include_top=False, weights='imagenet', input_shape=input_shape)
 
@@ -557,7 +559,7 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     val_labels = np.empty((0, 28))
 
     # loop through the validation data and make predictions
-    logging.info('Getting predictions...')
+    logging.info('Getting validation predictions...')
     for i in tqdm(range(len(val_generator))):
         image, label = val_generator[i]
         scores = model.predict(image)
@@ -578,7 +580,6 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
             score = f1_score(val_labels[:,i], p, average='binary')
             fscores[j,i] = score
 
-
     # Make a matrix that will hold the best threshold for each class to maximize Fscore
     max_fscore_thresholds = np.empty(28)
     for i in range(28):
@@ -589,7 +590,6 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
     logging.info('Probability threshold maximizing F1-score for each class:')
     logging.info(max_fscore_thresholds)
     logging.info('Macro F1 Score -> {}'.format(macro_f1))
-
 
     # write out the eval csv
     if save_eval:
@@ -708,6 +708,7 @@ def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_threshold
     eval_output['Predictions'] = np.array(val_predictions_str)
 
     eval_output.to_csv(args.submission_folder + '/eval_{}.csv'.format(args.model_name), index=False)
+
 
 # ----------------------------------------------------
 # learning rate schedule for LearningRateSchedule
@@ -840,3 +841,36 @@ def freeze_layers(model, first_layer, last_layer):
         model.layers[i].trainable = True
 
     return model
+
+
+# -------------------------------------------------------------
+# Prepares an existing model for use
+# -------------------------------------------------------------
+def prepare_existing_model(args, lr=1e-3, fine_tune=False):
+
+    if fine_tune:
+        if args.loss_function == 'binary_crossentropy':
+            base_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+                                    custom_objects={'f1_loss': f1_loss, 'f1': f1})
+        elif args.loss_function == 'focal_loss':
+            base_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+                                    custom_objects={'f1_loss': f1_loss, 'f1': f1, 'focal_loss': focal_loss})
+    else:
+        if args.loss_function == 'binary_crossentropy':
+            base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label), custom_objects={'f1': f1})
+        elif args.loss_function == 'focal_loss':
+            base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                    custom_objects={'f1': f1, 'focal_loss': focal_loss})
+
+    if args.gpu_count > 1:
+        model = multi_gpu_model(base_model, gpus=args.gpu_count)
+    else:
+        model = base_model
+
+    # compile model with desired loss function
+    if args.loss_function == 'binary_crossentropy':
+        model.compile(loss=f1_loss, optimizer=Adam(lr=lr), metrics=['accuracy', f1])
+    elif args.loss_function == 'focal_loss':
+        model.compile(loss=focal_loss, optimizer=Adam(lr=lr), metrics=['accuracy', f1])
+
+    return model, base_model
