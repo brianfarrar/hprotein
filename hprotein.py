@@ -57,6 +57,7 @@ mini_validate_set = ['001838f8-bbca-11e8-b2bc-ac1f6b6435d0',
                      'ffeae6f0-bbc9-11e8-b2bc-ac1f6b6435d0'
 ]
 
+
 # -------------------------------------------------------------
 # Converts a text based "True" or "False" to a python bool
 # -------------------------------------------------------------
@@ -601,37 +602,37 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
 # ----------------------------------------------------
 # Returns the best model and fscore matrix from disk
 # ----------------------------------------------------
-def get_best_model(args):
+def get_best_model(model_folder, model_label):
 
     final_model = None
     max_thresholds_matrix = None
 
     # Get thresholds
     logging.info('Getting correct model and thresholds...')
-    if os.path.isfile('{}/{}_thresh.npy'.format(args.model_folder, args.model_label)):
+    if os.path.isfile('{}/{}_thresh.npy'.format(model_folder, model_label)):
 
         # load model
-        logging.info('Loading model {}...'.format(args.model_label))
-        final_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+        logging.info('Loading model {}...'.format(model_label))
+        final_model = load_model('{}/{}.model'.format(model_folder, model_label),
                                  custom_objects={'f1': f1, 'focal_loss': focal_loss})
 
         # load thresholds
-        max_thresholds_matrix = np.load('{}/{}_thresh.npy'.format(args.model_folder, args.model_label))
+        max_thresholds_matrix = np.load('{}/{}_thresh.npy'.format(model_folder, model_label))
 
-    elif os.path.isfile('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label)):
+    elif os.path.isfile('{}/{}_fine_tune_thresh.npy'.format(model_folder, model_label)):
 
         # load model
-        logging.info('Loading model {}_fine_tune...'.format(args.model_label))
-        final_model = load_model('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+        logging.info('Loading model {}_fine_tune...'.format(model_label))
+        final_model = load_model('{}/{}_fine_tune.model'.format(model_folder, model_label),
                                  custom_objects={'f1': f1, 'f1_loss': f1_loss, 'focal_loss': focal_loss})
 
         # load thresholds
-        max_thresholds_matrix = np.load('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label))
+        max_thresholds_matrix = np.load('{}/{}_fine_tune_thresh.npy'.format(model_folder, model_label))
     else:
-        logging.warning("Can't find model file {}/{}.model or {}/{}_fine_tune.model".format(args.model_folder,
-                                                                                            args.model_label,
-                                                                                            args.model_folder,
-                                                                                            args.model_label))
+        logging.warning("Can't find model file {}/{}.model or {}/{}_fine_tune.model".format(model_folder,
+                                                                                            model_label,
+                                                                                            model_folder,
+                                                                                            model_label))
 
     if max_thresholds_matrix is not None:
         logging.info('Using the following thresholds:')

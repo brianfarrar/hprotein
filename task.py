@@ -48,7 +48,7 @@ def run(argv=None):
                         help='Which loss function to use for the run')
 
     parser.add_argument('--gpu_count', dest='gpu_count', default=1, type=int,
-                        help='Number of epochs')
+                        help='Number of gpus to use for training')
 
     parser.add_argument('--run_eval', dest='run_eval', default='True',
                         help='Text boolean to decide whether to run eval')
@@ -163,31 +163,41 @@ def run_training(args):
 
         logging.info("Start of primary training...")
 
-        # create the base model
-        base_model = hprotein.create_model(model_name=args.model_name)
-
-        # create or load the model
+        # if this is a new model, create it and compile
         if hprotein.text_to_bool(args.new_model):
+            base_model = hprotein.create_model(model_name=args.model_name)
+
             if args.gpu_count > 1:
                 model = multi_gpu_model(base_model, gpus=args.gpu_count)
             else:
                 model = base_model
-        else:
+
+            # compile model with desired loss function
             if args.loss_function == 'binary_crossentropy':
-                model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                   custom_objects={'f1': hprotein.f1})
+                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
             elif args.loss_function == 'focal_loss':
-                model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
-                                   custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
 
-        # compile model with desired loss function
-        if args.loss_function == 'focal_loss':
-            loss = hprotein.focal_loss
-        elif args.loss_function == 'binary_crossentropy':
-            loss = args.loss_function
+        # if this is a run on an existing model, then load and compile
+        if not hprotein.text_to_bool(args.new_model):
+            if args.loss_function == 'binary_crossentropy':
+                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                        custom_objects={'f1': hprotein.f1})
+            elif args.loss_function == 'focal_loss':
+                base_model = load_model('{}/{}.model'.format(args.model_folder, args.model_label),
+                                        custom_objects={'f1': hprotein.f1, 'focal_loss': hprotein.focal_loss})
 
-        # primary training run
-        model.compile(loss=loss, optimizer=Adam(lr=1e-03), metrics=['acc', hprotein.f1])
+            if args.gpu_count > 1:
+                model = multi_gpu_model(base_model, gpus=args.gpu_count)
+            else:
+                model = base_model
+
+            # compile model with desired loss function
+            if args.loss_function == 'binary_crossentropy':
+                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
+            elif args.loss_function == 'focal_loss':
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
+
         model.summary()
 
         hist = model.fit_generator(training_generator,
@@ -201,7 +211,7 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint, schedule])
 
-        if args.gpu_count > 1 and args.model_name == 'InceptionV2Resnet':
+        if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
             base_model.save('{}/{}.model'.format(args.model_folder, args.model_label))
 
     #
@@ -293,7 +303,7 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint])
 
-        if args.gpu_count > 1 and args.model_name == 'InceptionV2Resnet':
+        if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
             base_model.save('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label))
 
 
@@ -380,8 +390,14 @@ def run_predict(args):
     # Log start of predict process
     logging.info('Starting run_predict...')
 
+    # get predict data
+    logging.info('Reading predict test set from {}...'.format(args.predict_folder))
+    predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
+    predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
+                                                       model_name=args.model_name)
+
     # get the best model and related threshold matrix
-    final_model, max_thresholds_matrix = hprotein.get_best_model(args)
+    final_model, max_thresholds_matrix = hprotein.get_best_model(args.model_folder, args.model_label)
 
     if args.gpu_count > 1:
         # compile model with desired loss function
@@ -391,12 +407,6 @@ def run_predict(args):
             final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
 
         final_model.summary()
-
-    # get predict data
-    logging.info('Reading predict test set from {}...'.format(args.predict_folder))
-    predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
-    predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
-                                                       model_name=args.model_name)
 
     # generate predictions
     logging.info('Starting prediction run...')
@@ -451,6 +461,10 @@ def run_predict(args):
 
     # write out the csv
     submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
+
+    # copy the submission file to gcs
+    hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
+                              'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
 
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 
