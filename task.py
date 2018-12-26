@@ -9,7 +9,6 @@ import hprotein
 
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras.optimizers import Adam
-from keras.models import load_model
 from keras.utils import multi_gpu_model
 
 
@@ -31,6 +30,9 @@ def run(argv=None):
 
     parser.add_argument('--steps_per_epoch', dest='steps_per_epoch', default=-1, type=int,
                         help='Number of epochs')
+
+    parser.add_argument('--initial_lr', dest='initial_lr', default=1e-3, type=float,
+                        help='Initial learning rate')
 
     parser.add_argument('--change_lr_epoch', dest='change_lr_epoch', default=16, type=int,
                         help='Epoch to reduce learning rate')
@@ -89,8 +91,8 @@ def run(argv=None):
     parser.add_argument('--submission_list', dest='submission_list', default='sample_submission.csv',
                         help='File with submission list')
 
-    parser.add_argument('--job_id', dest='job_id', default='',
-                        help='Unique job id')
+    parser.add_argument('--copy_to_gcs', dest='copy_to_gcs', default='True',
+                        help='Text boolean to decide whether to copy to gcs')
 
     # get the command line arguments
     args, _ = parser.parse_known_args(argv)
@@ -131,7 +133,7 @@ def run_training(args):
                                  save_weights_only=False, mode='min', period=1)
 
     # define learning rate schedule callback
-    lr_schedule = hprotein.lr_decay_schedule(change_point=args.change_lr_epoch)
+    lr_schedule = hprotein.lr_decay_schedule(initial_lr=args.initial_lr, change_point=args.change_lr_epoch)
     schedule = LearningRateScheduler(schedule=lr_schedule)
 
     # configure trainer options for the environment
@@ -174,13 +176,13 @@ def run_training(args):
 
             # compile model with desired loss function
             if args.loss_function == 'binary_crossentropy':
-                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
+                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
             elif args.loss_function == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-3), metrics=['accuracy', hprotein.f1])
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
 
         # if this is a run on an existing model, then load and compile
         if not hprotein.text_to_bool(args.new_model):
-            model, base_model = hprotein.prepare_existing_model(args, lr=1e-3)
+            model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr)
 
         model.summary()
 
@@ -195,7 +197,7 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint, schedule])
 
-        if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
+        if args.gpu_count > 1:
             base_model.save('{}/{}.model'.format(args.model_folder, args.model_label))
 
     #
@@ -213,7 +215,7 @@ def run_training(args):
 
         # if we did not run training and are only fine tuning, load model
         if not hprotein.text_to_bool(args.run_training):
-            model, base_model = hprotein.prepare_existing_model(args, lr=1e-4)
+            model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr/10.)
 
         # freeze all layers except the fully connected layers
         if args.model_name == 'gap_net_bn_relu':
@@ -251,9 +253,9 @@ def run_training(args):
 
         # compile model with desired loss function
         if args.loss_function == 'binary_crossentropy':
-            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
         elif args.loss_function == 'focal_loss':
-            model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
 
         model.summary()
 
@@ -269,8 +271,19 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint])
 
-        if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
+        #if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
+        if args.gpu_count > 1:
             base_model.save('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label))
+
+        # copy models to gcs
+        if hprotein.text_to_bool(args.copy_to_gcs):
+
+            hprotein.copy_file_to_gcs('{}/{}.model'.format(args.model_folder, args.model_label),
+                                      'gs://hprotein/models/{}.model'.format(args.model_label))
+
+            hprotein.copy_file_to_gcs('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label),
+                                      'gs://hprotein/models/{}_fine_tune.model'.format(args.model_label))
+
 
 
 # ---------------------------------
@@ -289,14 +302,14 @@ def run_eval(args):
 
     # eval primary model
     logging.info('Loading primary training model...')
-    model, base_model = hprotein.prepare_existing_model(args, lr=1e-4)
+    model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr/10.)
     model.summary()
 
     model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
 
     # eval fine tune model
     logging.info('Loading fine tuned training model...')
-    model, base_model = hprotein.prepare_existing_model(args, lr=1e-4, fine_tune=True)
+    model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr, fine_tune=True)
     model.summary()
 
     model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
@@ -305,10 +318,16 @@ def run_eval(args):
         logging.info('Primary model has a better Macro-F1, saving thresholds...')
         max_fscore_thresholds = model1_max_fscore_thresholds
         np.save('{}/{}_thresh.npy'.format(args.model_folder, args.model_label), max_fscore_thresholds)
+        if hprotein.text_to_bool(args.copy_to_gcs):
+            hprotein.copy_file_to_gcs('{}/{}_thresh.npy'.format(args.model_folder, args.model_label),
+                                      'gs://hprotein/models/{}_thresh.npy'.format(args.model_label))
     else:
         logging.info('Fine-tune model has a better Macro-F1, saving thresholds...')
         max_fscore_thresholds = model2_max_fscore_thresholds
         np.save('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label), max_fscore_thresholds)
+        if hprotein.text_to_bool(args.copy_to_gcs):
+            hprotein.copy_file_to_gcs('{}/{}_fine_tune_thresh.npy'.format(args.model_folder, args.model_label),
+                                      'gs://hprotein/models/{}_fine_tune_thresh.npy'.format(args.model_label))
 
     logging.info("Finished evaluation...")
 
@@ -325,7 +344,7 @@ def run_predict(args):
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
     predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
     predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
-                                                       model_name=args.model_name)
+                                                       model_name=args.model_name, mode='predict')
 
     # get the best model and related threshold matrix
     final_model, max_thresholds_matrix = hprotein.get_best_model(args.model_folder, args.model_label)
@@ -333,9 +352,9 @@ def run_predict(args):
     if args.gpu_count > 1:
         # compile model with desired loss function
         if args.loss_function == 'binary_crossentropy':
-            final_model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            final_model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
         elif args.loss_function == 'focal_loss':
-            final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
 
         final_model.summary()
 
@@ -394,8 +413,9 @@ def run_predict(args):
     submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
 
     # copy the submission file to gcs
-    hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
-                              'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
+    if hprotein.text_to_bool(args.copy_to_gcs):
+        hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
+                                  'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
 
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 

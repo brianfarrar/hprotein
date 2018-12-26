@@ -19,7 +19,7 @@ from keras.layers import Activation, Dropout, Flatten, Dense, Input, Conv2D, Max
                          Concatenate, ReLU, GlobalAveragePooling2D
 
 from keras.models import Model
-from keras.applications import InceptionResNetV2, ResNet50
+from keras.applications import InceptionResNetV2, ResNet50, InceptionV3
 from keras.layers.noise import AlphaDropout
 from keras.models import load_model
 from keras.utils import multi_gpu_model
@@ -119,7 +119,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
                  labels,
                  model_name='gap_net_bn_relu',
                  shuffle=False,
-                 augment=False):
+                 augment=False,
+                 mode='Train'):
 
         self.args = args
         self.path = path
@@ -132,7 +133,10 @@ class HproteinDataGenerator(keras.utils.Sequence):
         example_count = len(self.specimen_ids)
 
         # calculate the number of batches
-        self.batch_count = int(np.ceil(example_count / float(self.batch_size)))
+        if mode in ['train', 'validate']:
+            self.batch_count = int(np.floor(example_count / float(self.batch_size)))
+        else:
+            self.batch_count = int(np.ceil(example_count / float(self.batch_size)))
 
         # get the size of the last batch
         last_batch_size = example_count - ((self.batch_count - 1) * self.batch_size)
@@ -141,7 +145,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.last_batch_padding = self.batch_size - last_batch_size
 
         # shape of features
-        if model_name == 'InceptionV2Resnet':
+        if model_name in ['InceptionV2Resnet','InceptionV3']:
             self.shape = (299, 299, 3)
         elif model_name == 'ResNet50':
             self.shape = (224, 224, 3)
@@ -421,6 +425,8 @@ def create_model(model_name='basic_cnn'):
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
 
+        model = Model(init, x)
+
     elif model_name == 'gap_net_selu':
 
         drop_rate = 0.25
@@ -452,6 +458,8 @@ def create_model(model_name='basic_cnn'):
         x = AlphaDropout(drop_rate)(x)
         x = Dense(28, activation=selu, kernel_initializer='lecun_normal', bias_initializer='zeros')(x)
         x = Activation('sigmoid')(x)
+
+        model = Model(init, x)
 
     elif model_name == 'gap_net_bn_relu':
 
@@ -507,6 +515,8 @@ def create_model(model_name='basic_cnn'):
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
 
+        model = Model(init, x)
+
     elif model_name == 'InceptionV2Resnet':
 
         drop_rate = 0.5
@@ -523,6 +533,26 @@ def create_model(model_name='basic_cnn'):
         x = Dropout(drop_rate)(x)
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
+
+        model = Model(init, x)
+
+    elif model_name == 'InceptionV2Resnet':
+
+        drop_rate = 0.5
+
+        base_model = InceptionV3(include_top=False, weights='imagenet', input_shape=input_shape)
+
+        x = BatchNormalization(axis=-1)(init)
+        x = base_model(x)
+        x = Conv2D(32, kernel_size=(1, 1), activation='relu')(x)
+        x = Flatten()(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(1024, activation='relu')(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(28)(x)
+        x = Activation('sigmoid')
+
+        model = Model(init, x)
 
     elif model_name == 'ResNet50':
 
@@ -541,10 +571,11 @@ def create_model(model_name='basic_cnn'):
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
 
+        model = Model(init, x)
+
     else:
         logging.info('Bad model name: {}'.format(model_name))
-
-    model = Model(init, x)
+        model = None
 
     return model
 
@@ -608,7 +639,7 @@ def get_best_model(model_folder, model_label):
     max_thresholds_matrix = None
 
     # Get thresholds
-    logging.info('Getting correct model and thresholds...')
+    logging.info('Getting favored model and thresholds...')
     if os.path.isfile('{}/{}_thresh.npy'.format(model_folder, model_label)):
 
         # load model
@@ -635,7 +666,7 @@ def get_best_model(model_folder, model_label):
                                                                                             model_label))
 
     if max_thresholds_matrix is not None:
-        logging.info('Using the following thresholds:')
+        logging.info('Model {} favors the following thresholds:'.format(model_label))
         logging.info(max_thresholds_matrix)
 
     return final_model, max_thresholds_matrix
@@ -713,14 +744,14 @@ def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_threshold
 # ----------------------------------------------------
 # learning rate schedule for LearningRateSchedule
 # ----------------------------------------------------
-def lr_decay_schedule(change_point=15):
+def lr_decay_schedule(initial_lr=1e-3, change_point=15):
 
     def schedule(epoch):
 
         if epoch < change_point:
-            lr = 1e-3
+            lr = initial_lr
         else:
-            lr = 1e-4
+            lr = initial_lr / 10.
 
         logging.info('Current learning rate is {}'.format(lr))
 
@@ -795,7 +826,7 @@ def get_val_generator(args):
 
     logging.info('Creating Hprotein validation data generator...')
     val_generator = HproteinDataGenerator(args, args.train_folder, val_specimen_ids, val_labels,
-                                          model_name=args.model_name)
+                                          model_name=args.model_name, mode='validate')
 
     return validation_set, val_generator
 
@@ -813,7 +844,8 @@ def get_train_generator(args, validation_set):
     training_generator = HproteinDataGenerator(args, args.train_folder, specimen_ids, labels,
                                                model_name=args.model_name,
                                                shuffle=True,
-                                               augment=True)
+                                               augment=True,
+                                               mode='train')
 
     return training_generator
 

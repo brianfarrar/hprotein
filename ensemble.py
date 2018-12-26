@@ -173,9 +173,9 @@ def ensemble_predictions(args):
 
     macro_f1 = np.mean(np.max(fscores, axis=0))
 
-    logging.info('Probability threshold maximizing F1-score for each class:')
+    logging.info('Ensembled probability threshold maximizing F1-score for each class:')
     logging.info(max_thresholds_matrix)
-    logging.info('Macro F1 Score -> {}'.format(macro_f1))
+    logging.info('Ensembled Macro F1 Score -> {}'.format(macro_f1))
 
 
     #
@@ -233,11 +233,16 @@ def ensemble_predictions(args):
     # get the mean of the predictions for the model
     final_predictions = np.mean(predictions, axis=0)
 
+
     # drop the blank rows
     if args.gpu_count > 1:
         # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
         if images.shape[0] < predict_generator.batch_size:
             final_predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
+
+    # remind the log which thresholds are being used
+    logging.info('Ensembled probability threshold maximizing F1-score for each class:')
+    logging.info(max_thresholds_matrix)
 
     # convert the predictions into the submission file format
     logging.info('Converting to submission format...')
