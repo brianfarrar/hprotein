@@ -31,6 +31,9 @@ def run(argv=None):
     parser.add_argument('--steps_per_epoch', dest='steps_per_epoch', default=-1, type=int,
                         help='Number of epochs')
 
+    parser.add_argument('--val_steps', dest='val_steps', default=8, type=int,
+                        help='Number of validation steps to run ')
+
     parser.add_argument('--initial_lr', dest='initial_lr', default=1e-3, type=float,
                         help='Initial learning rate')
 
@@ -60,6 +63,9 @@ def run(argv=None):
 
     parser.add_argument('--run_predict', dest='run_predict', default='True',
                         help='Text boolean to decide whether to run predict')
+
+    parser.add_argument('--use_adaptive_thresh', dest='use_adaptive_thresh', default='True',
+                        help='Text boolean to decide whether to use adaptive thresholds')
 
     parser.add_argument('--new_model', dest='new_model', default='True',
                         help='Text boolean to decide whether to run predict')
@@ -132,10 +138,6 @@ def run_training(args):
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
 
-    # define learning rate schedule callback
-    lr_schedule = hprotein.lr_decay_schedule(initial_lr=args.initial_lr, change_point=args.change_lr_epoch)
-    schedule = LearningRateScheduler(schedule=lr_schedule)
-
     # configure trainer options for the environment
     if args.gpu_count > 1:
         use_multiprocessing = True
@@ -150,6 +152,11 @@ def run_training(args):
     # if steps per epoch is not chosen at launch, then set it to the length of the full data set
     if args.steps_per_epoch == -1:
         args.steps_per_epoch = len(training_generator)
+
+    # if validation steps is not chosen at launch, then set it to the length of the validation data set
+    if args.val_steps == -1:
+        args.val_steps = len(val_generator)
+
 
     # get class weights to deal with data imbalance
     if hprotein.text_to_bool(args.use_class_weights):
@@ -174,6 +181,54 @@ def run_training(args):
             else:
                 model = base_model
 
+            # for pretrained models run a warm start first
+            if args.model_name in ['ResNet50','InceptionV2Resnet','InceptionV3']:
+
+                logging.info('Running a warm start...')
+
+                # freeze correct layers
+                first_layer, last_layer = hprotein.get_layers_to_freeze(args.model_name)
+                hprotein.freeze_layers(base_model, first_layer, last_layer)
+
+                # compile model with desired loss function
+                if args.loss_function == 'binary_crossentropy':
+                    model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
+                                  metrics=['accuracy', hprotein.f1])
+                elif args.loss_function == 'focal_loss':
+                    model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
+                                  metrics=['accuracy', hprotein.f1])
+
+                model.summary()
+
+                # warms start constants
+                warm_start_epochs = 10
+                warm_start_lr_change_point = 5
+
+                # define learning rate schedule callback for warm start
+                lr_schedule = hprotein.lr_decay_schedule(initial_lr=args.initial_lr,
+                                                         change_point=warm_start_lr_change_point)
+                schedule = LearningRateScheduler(schedule=lr_schedule)
+
+                # run a fit_generator step
+                hist = model.fit_generator(training_generator,
+                                           steps_per_epoch=warm_start_epochs,
+                                           validation_data=val_generator,
+                                           validation_steps=8,
+                                           epochs=10,
+                                           use_multiprocessing=use_multiprocessing,
+                                           workers=workers,
+                                           class_weight=cw,
+                                           verbose=1,
+                                           callbacks=[checkpoint, schedule])
+
+                # unfreeze layers
+                if args.gpu_count > 1:
+                    for layer in base_model.layers:
+                        layer.trainable = True
+                else:
+                    for layer in model.layers:
+                        layer.trainable = True
+
             # compile model with desired loss function
             if args.loss_function == 'binary_crossentropy':
                 model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
@@ -181,10 +236,15 @@ def run_training(args):
                 model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
 
         # if this is a run on an existing model, then load and compile
+        logging.info('Starting full model training...')
         if not hprotein.text_to_bool(args.new_model):
             model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr)
 
         model.summary()
+
+        # define learning rate schedule callback
+        lr_schedule = hprotein.lr_decay_schedule(initial_lr=args.initial_lr, change_point=args.change_lr_epoch)
+        schedule = LearningRateScheduler(schedule=lr_schedule)
 
         hist = model.fit_generator(training_generator,
                                    steps_per_epoch=args.steps_per_epoch,
@@ -198,6 +258,10 @@ def run_training(args):
                                    callbacks=[checkpoint, schedule])
 
         if args.gpu_count > 1:
+            logging.info('-- Base Model --')
+            for i, layer in enumerate(base_model.layers):
+                logging.info('Layer {} is {}'.format(i, layer.name))
+
             base_model.save('{}/{}.model'.format(args.model_folder, args.model_label))
 
     #
@@ -217,39 +281,9 @@ def run_training(args):
         if not hprotein.text_to_bool(args.run_training):
             model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr/10.)
 
-        # freeze all layers except the fully connected layers
-        if args.model_name == 'gap_net_bn_relu':
-
-            first_layer = -1
-            last_layer = -7
-
-            if args.gpu_count > 1:
-                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
-            else:
-                model = hprotein.freeze_layers(model, first_layer, last_layer)
-
-        elif args.model_name == 'InceptionV2Resnet':
-
-            first_layer = -3
-            last_layer = -9
-
-            if args.gpu_count > 1:
-                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
-            else:
-                model = hprotein.freeze_layers(model, first_layer, last_layer)
-
-        elif args.model_name == 'ResNet50':
-
-            first_layer = -3
-            last_layer = -9
-
-            if args.gpu_count > 1:
-                base_model = hprotein.freeze_layers(base_model, first_layer, last_layer)
-            else:
-                model = hprotein.freeze_layers(model, first_layer, last_layer)
-
-        else:
-            logging.warning('Fine tuning not supported for model name: {}'.format(args.model_name))
+        # freeze correct layers
+        first_layer, last_layer = hprotein.get_layers_to_freeze(args.model_name)
+        hprotein.freeze_layers(base_model, first_layer, last_layer)
 
         # compile model with desired loss function
         if args.loss_function == 'binary_crossentropy':
@@ -271,7 +305,6 @@ def run_training(args):
                                    verbose=1,
                                    callbacks=[checkpoint])
 
-        #if args.gpu_count > 1 and args.model_name in ['InceptionV2Resnet', 'ResNet50']:
         if args.gpu_count > 1:
             base_model.save('{}/{}_fine_tune.model'.format(args.model_folder, args.model_label))
 
@@ -400,10 +433,17 @@ def run_predict(args):
     for row in tqdm(range(submit.shape[0])):
         str_label = ''
         for col in range(predictions.shape[1]):
-            if predictions[row, col] < max_thresholds_matrix[col]:
-                str_label += ''
+            if hprotein.text_to_bool(args.use_adaptive_thresh):
+                if predictions[row, col] < max_thresholds_matrix[col]:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
             else:
-                str_label += str(col) + ' '
+                if predictions[row, col] <= 0.5:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
+
         prediction_str.append(str_label.strip())
 
     # add column to pandas dataframe for submission

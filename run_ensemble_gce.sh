@@ -3,7 +3,7 @@ python3 ensemble.py \
     --ensemble_name="ensemble" \
     --ensemble_csv="ensemble_list.csv" \
     --batch_size=32 \
-    --use_class_weights="False" \
+    --use_class_weights="True" \
     --gpu_count=1 \
     --val_csv="val_set.csv" \
     --train_folder="stage1_train" \

@@ -194,7 +194,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
-        if self.model_name in ['InceptionV2Resnet','ResNet50']:
+        if self.model_name in ['InceptionV2Resnet','ResNet50','InceptionV3']:
             image = cv2.resize(image, (self.shape[0], self.shape[1]))
 
         return image
@@ -360,7 +360,7 @@ def focal_loss(y_true, y_pred, gamma=2):
 def create_model(model_name='basic_cnn'):
 
     # determine the input shape
-    if model_name == 'InceptionV2Resnet':
+    if model_name in ['InceptionV2Resnet', 'InceptionV3']:
         input_shape = (299, 299, 3)
     elif model_name == 'ResNet50':
         input_shape = (224, 224, 3)
@@ -536,7 +536,7 @@ def create_model(model_name='basic_cnn'):
 
         model = Model(init, x)
 
-    elif model_name == 'InceptionV2Resnet':
+    elif model_name == 'InceptionV3':
 
         drop_rate = 0.5
 
@@ -544,19 +544,20 @@ def create_model(model_name='basic_cnn'):
 
         x = BatchNormalization(axis=-1)(init)
         x = base_model(x)
-        x = Conv2D(32, kernel_size=(1, 1), activation='relu')(x)
+
+        x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
         x = Flatten()(x)
         x = Dropout(drop_rate)(x)
         x = Dense(1024, activation='relu')(x)
         x = Dropout(drop_rate)(x)
         x = Dense(28)(x)
-        x = Activation('sigmoid')
+        x = Activation('sigmoid')(x)
 
         model = Model(init, x)
 
     elif model_name == 'ResNet50':
 
-        drop_rate = 0.25
+        drop_rate = 0.5
 
         base_model = ResNet50(include_top=False, weights='imagenet', input_shape=input_shape)
 
@@ -814,10 +815,14 @@ labels_dict = {
 # -------------------------------------------------------------
 # get_val_generator returns a prepared validation generator
 # -------------------------------------------------------------
-def get_val_generator(args):
+def get_val_generator(args, alternate_set=None):
 
     # get the validation set
-    df_valid = pd.read_csv(args.val_csv)
+    if alternate_set == None:
+        df_valid = pd.read_csv(args.val_csv)
+    else:
+        df_valid = pd.read_csv(alternate_set)
+
     validation_set = df_valid.values.tolist()
     validation_set = [item for sublist in validation_set for item in sublist]
 
@@ -866,10 +871,12 @@ def get_model_list(args):
 # -------------------------------------------------------------
 def freeze_layers(model, first_layer, last_layer):
 
-    for layer in model.layers:
+    logging.info('Layer count -> {}'.format(len(model.layers)))
+    for i, layer in enumerate(model.layers):
+        logging.info('Layer {} is {}'.format(i, layer.name))
         layer.trainable = False
 
-    for i in range(first_layer, last_layer + 1, -1):
+    for i in range(first_layer, last_layer - 1, -1):
         model.layers[i].trainable = True
 
     return model
@@ -906,3 +913,19 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
         model.compile(loss=focal_loss, optimizer=Adam(lr=lr), metrics=['accuracy', f1])
 
     return model, base_model
+
+
+# -----------------------------------------------------
+# Get layers to freeze for warm start or fine tune
+# -----------------------------------------------------
+def get_layers_to_freeze(model_name):
+
+    if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu']:
+        first_layer = -1
+        last_layer = -7
+    else:
+        first_layer = None
+        last_layer = None
+        logging.warning('Fine tuning not supported for model name: {}'.format(model_name))
+
+    return first_layer, last_layer
