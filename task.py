@@ -7,7 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 import hprotein
 
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, TensorBoard, ReduceLROnPlateau
 from keras.optimizers import Adam
 from keras.utils import multi_gpu_model
 
@@ -97,6 +97,9 @@ def run(argv=None):
     parser.add_argument('--submission_list', dest='submission_list', default='sample_submission.csv',
                         help='File with submission list')
 
+    parser.add_argument('--log_folder', dest='log_folder', default='logs',
+                        help='Folder to save tensorboard logs to')
+
     parser.add_argument('--copy_to_gcs', dest='copy_to_gcs', default='True',
                         help='Text boolean to decide whether to copy to gcs')
 
@@ -138,6 +141,16 @@ def run_training(args):
                                  monitor='val_loss', verbose=1, save_best_only=True,
                                  save_weights_only=False, mode='min', period=1)
 
+    # early stopping call back
+    early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+    # tensorboard call back
+    tb = TensorBoard(log_dir='{}/{}'.format(args.log_folder, args.model_label),
+                     batch_size=args.batch_size, write_graph=False, update_freq='epoch')
+
+    # learning rate decay call back
+    lr_decay = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, cooldown=3, min_lr=0.0001, verbose=1)
+
     # configure trainer options for the environment
     if args.gpu_count > 1:
         use_multiprocessing = True
@@ -157,10 +170,12 @@ def run_training(args):
     if args.val_steps == -1:
         args.val_steps = len(val_generator)
 
-
     # get class weights to deal with data imbalance
     if hprotein.text_to_bool(args.use_class_weights):
-        _, cw = hprotein.create_class_weight(hprotein.labels_dict)
+        if 'over_sample' in args.label_list:
+            _, cw = hprotein.create_class_weight(hprotein.over_sample_labels_dict)
+        else:
+            _, cw = hprotein.create_class_weight(hprotein.labels_dict)
     else:
         cw = None
 
@@ -184,6 +199,7 @@ def run_training(args):
             # for pretrained models run a warm start first
             if args.model_name in ['ResNet50','InceptionV2Resnet','InceptionV3']:
 
+
                 logging.info('Running a warm start...')
 
                 # freeze correct layers
@@ -201,8 +217,8 @@ def run_training(args):
                 model.summary()
 
                 # warms start constants
-                warm_start_epochs = 10
-                warm_start_lr_change_point = 5
+                warm_start_epochs = 4
+                warm_start_lr_change_point = 2
 
                 # define learning rate schedule callback for warm start
                 lr_schedule = hprotein.lr_decay_schedule(initial_lr=args.initial_lr,
@@ -214,12 +230,12 @@ def run_training(args):
                                            steps_per_epoch=warm_start_epochs,
                                            validation_data=val_generator,
                                            validation_steps=8,
-                                           epochs=10,
+                                           epochs=warm_start_epochs,
                                            use_multiprocessing=use_multiprocessing,
                                            workers=workers,
                                            class_weight=cw,
                                            verbose=1,
-                                           callbacks=[checkpoint, schedule])
+                                           callbacks=[checkpoint, schedule, early_stop])
 
                 # unfreeze layers
                 if args.gpu_count > 1:
@@ -255,13 +271,9 @@ def run_training(args):
                                    workers=workers,
                                    class_weight=cw,
                                    verbose=1,
-                                   callbacks=[checkpoint, schedule])
+                                   callbacks=[checkpoint, lr_decay, early_stop, tb])
 
         if args.gpu_count > 1:
-            logging.info('-- Base Model --')
-            for i, layer in enumerate(base_model.layers):
-                logging.info('Layer {} is {}'.format(i, layer.name))
-
             base_model.save('{}/{}.model'.format(args.model_folder, args.model_label))
 
     #

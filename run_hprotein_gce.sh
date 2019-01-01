@@ -2,15 +2,15 @@
 python3 task.py \
     --run_training="True" \
     --batch_size=64 \
-    --epochs=30 \
+    --epochs=40 \
     --steps_per_epoch=-1 \
-    --val_steps=24 \
+    --val_steps=-1 \
     --initial_lr=1e-3 \
-    --change_lr_epoch=20 \
+    --change_lr_epoch=30 \
     --use_class_weights="True" \
     --run_fine_tune="True" \
     --fine_tune_epochs=2 \
-    --loss_function="binary_crossentropy" \
+    --loss_function="focal_loss" \
     --gpu_count=2 \
     --run_eval="True" \
     --val_csv="val_set_kfold_0.csv" \
@@ -20,10 +20,11 @@ python3 task.py \
     --model_name="ResNet50" \
     --model_label="model_kf0" \
     --model_folder="models" \
-    --train_folder="stage1_train" \
+    --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \
-    --label_list="train.csv" \
+    --label_list="train_over_sample.csv" \
     --predict_folder="stage1_test" \
     --submission_folder="stage1_submit" \
     --submission_list="sample_submission.csv" \
+    --log_folder="logs" \
     --copy_to_gcs="True"

@@ -148,7 +148,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         if model_name in ['InceptionV2Resnet','InceptionV3']:
             self.shape = (299, 299, 3)
         elif model_name == 'ResNet50':
-            self.shape = (224, 224, 3)
+            self.shape = (256, 256, 3)
         else:
             self.shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -193,6 +193,8 @@ class HproteinDataGenerator(keras.utils.Sequence):
 
         # read image as a 1-channel image
         image = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            logging.info('Error on -> {}'.format(fname))
 
         if self.model_name in ['InceptionV2Resnet','ResNet50','InceptionV3']:
             image = cv2.resize(image, (self.shape[0], self.shape[1]))
@@ -363,7 +365,7 @@ def create_model(model_name='basic_cnn'):
     if model_name in ['InceptionV2Resnet', 'InceptionV3']:
         input_shape = (299, 299, 3)
     elif model_name == 'ResNet50':
-        input_shape = (224, 224, 3)
+        input_shape = (256, 256, 3)
     else:
         input_shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -548,7 +550,7 @@ def create_model(model_name='basic_cnn'):
         x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
         x = Flatten()(x)
         x = Dropout(drop_rate)(x)
-        x = Dense(1024, activation='relu')(x)
+        x = Dense(512, activation='relu')(x)
         x = Dropout(drop_rate)(x)
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
@@ -571,6 +573,7 @@ def create_model(model_name='basic_cnn'):
         x = Dropout(drop_rate)(x)
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
+
 
         model = Model(init, x)
 
@@ -809,6 +812,38 @@ labels_dict = {
     25: 8228,
     26: 328,
     27: 11
+}
+
+# Class abundance for protein dataset
+over_sample_labels_dict = {
+    0: 12885,
+    1: 1254,
+    2: 3621,
+    3: 1561,
+    4: 1858,
+    5: 2513,
+    6: 1008,
+    7: 2822,
+    8: 479,
+    9: 431,
+    10: 366,
+    11: 1093,
+    12: 688,
+    13: 537,
+    14: 1066,
+    15: 336,
+    16: 530,
+    17: 210,
+    18: 902,
+    19: 1482,
+    20: 172,
+    21: 3777,
+    22: 802,
+    23: 2965,
+    24: 322,
+    25: 8228,
+    26: 328,
+    27: 365
 }
 
 
