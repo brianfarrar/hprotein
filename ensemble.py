@@ -95,6 +95,9 @@ def ensemble_predictions(args):
 
     # get model list
     model_list = hprotein.get_model_list(args)
+    logging.info('Ensembling {} models as follows:'.format(len(model_list)))
+    for i, ens_model in enumerate(model_list):
+        logging.info('{} -> {} | {} | {}'.format(i, ens_model[0], ens_model[1], ens_model[2]))
 
     #
     # Use validation data to calculate thresholds
@@ -113,6 +116,8 @@ def ensemble_predictions(args):
         if args.gpu_count > 1:
             # compile model with desired loss function
             if m[1] == 'binary_crossentropy':
+                model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            elif m[1] == 'f1_loss':
                 model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
             elif m[1] == 'focal_loss':
                 model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
@@ -184,10 +189,11 @@ def ensemble_predictions(args):
         if args.gpu_count > 1:
             # compile model with desired loss function
             if m[1] == 'binary_crossentropy':
+                model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            elif m[1] == 'f1_loss':
                 model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
             elif m[1] == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4),
-                                    metrics=['accuracy', hprotein.f1])
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
 
             model.summary()
 

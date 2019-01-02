@@ -2,10 +2,10 @@
 python3 task.py \
     --run_training="True" \
     --batch_size=32 \
-    --epochs=30 \
+    --epochs=40 \
     --steps_per_epoch=-1 \
     --val_steps=-1 \
-    --initial_lr=1e-4 \
+    --initial_lr=1e-3 \
     --change_lr_epoch=30 \
     --use_class_weights="True" \
     --run_fine_tune="True" \
@@ -13,12 +13,12 @@ python3 task.py \
     --loss_function="binary_crossentropy" \
     --gpu_count=2 \
     --run_eval="True" \
-    --val_csv="val_set_kfold_0.csv" \
+    --val_csv="val_set_kfold_1.csv" \
     --run_predict="True" \
     --use_adaptive_thresh="True" \
     --new_model="True" \
-    --model_name="InceptionV3" \
-    --model_label="model_kf0" \
+    --model_name="InceptionV2Resnet" \
+    --model_label="model_kf1" \
     --model_folder="models" \
     --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \

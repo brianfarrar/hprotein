@@ -114,6 +114,8 @@ def get_input_shape(model_name):
         shape = (299, 299, 3)
     elif model_name in ['ResNet50', 'ResNet18']:
         shape = (224, 224, 3)
+    elif model_name in ['gap_res']:
+        shape = (256, 256, 3)
     else:
         shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -207,7 +209,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         if image is None:
             logging.info('Error on -> {}'.format(fname))
 
-        if self.model_name in ['InceptionV2Resnet','ResNet50','InceptionV3','ResNet18']:
+        if self.shape[0] < IMAGE_SIZE:
             image = cv2.resize(image, (self.shape[0], self.shape[1]))
 
         return image
@@ -971,10 +973,12 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
         model = base_model
 
     # compile model with desired loss function
-    if args.loss_function == 'binary_crossentropy':
-        model.compile(loss=f1_loss, optimizer=Adam(lr=lr), metrics=['accuracy', f1])
+    if args.loss_function == 'f1_loss':
+        model.compile(loss=f1_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
+    elif args.loss_function == 'binary_crossentropy':
+        model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
     elif args.loss_function == 'focal_loss':
-        model.compile(loss=focal_loss, optimizer=Adam(lr=lr), metrics=['accuracy', f1])
+        model.compile(loss=focal_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
 
     return model, base_model
 

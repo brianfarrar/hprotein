@@ -207,8 +207,11 @@ def run_training(args):
                 hprotein.freeze_layers(base_model, first_layer, last_layer)
 
                 # compile model with desired loss function
-                if args.loss_function == 'binary_crossentropy':
+                if args.loss_function == 'f1_loss':
                     model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
+                                  metrics=['accuracy', hprotein.f1])
+                elif args.loss_function == 'binary_crossentropy':
+                    model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr),
                                   metrics=['accuracy', hprotein.f1])
                 elif args.loss_function == 'focal_loss':
                     model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
@@ -246,10 +249,15 @@ def run_training(args):
                         layer.trainable = True
 
             # compile model with desired loss function
-            if args.loss_function == 'binary_crossentropy':
-                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
+            if args.loss_function == 'f1_loss':
+                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
+                              metrics=['accuracy', hprotein.f1])
+            elif args.loss_function == 'binary_crossentropy':
+                model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr),
+                              metrics=['accuracy', hprotein.f1])
             elif args.loss_function == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', hprotein.f1])
+                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
+                              metrics=['accuracy', hprotein.f1])
 
         # if this is a run on an existing model, then load and compile
         logging.info('Starting full model training...')
@@ -298,10 +306,15 @@ def run_training(args):
         hprotein.freeze_layers(base_model, first_layer, last_layer)
 
         # compile model with desired loss function
-        if args.loss_function == 'binary_crossentropy':
-            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
+        if args.loss_function == 'f1_loss':
+            model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', hprotein.f1])
+        elif args.loss_function == 'binary_crossentropy':
+            model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', hprotein.f1])
         elif args.loss_function == 'focal_loss':
-            model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
+            model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', hprotein.f1])
 
         model.summary()
 
@@ -396,10 +409,15 @@ def run_predict(args):
 
     if args.gpu_count > 1:
         # compile model with desired loss function
-        if args.loss_function == 'binary_crossentropy':
-            final_model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
+        if args.loss_function == 'f1_loss':
+            final_model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
+                                metrics=['accuracy', hprotein.f1])
+        elif args.loss_function == 'binary_crossentropy':
+            final_model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr),
+                                metrics=['accuracy', hprotein.f1])
         elif args.loss_function == 'focal_loss':
-            final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr/10.), metrics=['accuracy', hprotein.f1])
+            final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
+                                metrics=['accuracy', hprotein.f1])
 
         final_model.summary()
 
