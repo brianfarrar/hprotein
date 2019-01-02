@@ -63,6 +63,9 @@ def run(argv=None):
     parser.add_argument('--submission_list', dest='submission_list', default='sample_submission.csv',
                         help='File with submission list')
 
+    parser.add_argument('--copy_to_gcs', dest='copy_to_gcs', default='True',
+                        help='Text boolean to decide whether to copy to gcs')
+
 
     # get the command line arguments
     args, _ = parser.parse_known_args(argv)
@@ -83,11 +86,12 @@ def ensemble_predictions(args):
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
     predict_set_sids, predict_set_lbls = hprotein.get_data(args.submission_folder, args.submission_list, mode='test')
+    predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids, predict_set_lbls,
+                                                       model_name=args.model_name)
 
-    '''
     # get validation data generator
     validation_set, val_generator = hprotein.get_val_generator(args)
-    '''
+
 
     # get model list
     model_list = hprotein.get_model_list(args)
@@ -95,29 +99,10 @@ def ensemble_predictions(args):
     #
     # Use validation data to calculate thresholds
     #
-
-    # calculate the size of the val_predictions array
-    logging.info('Determining the count of predictions in the ensembled validation set...')
-    val_example_count = 0
-    for i in range(len(model_list)):
-        logging.info('Reading val_set_kfold_{}.csv'.format(i))
-        validation_set, val_generator = hprotein.get_val_generator(args, alternate_set='val_set_kfold_{}.csv'.format(i))
-        val_example_count += (len(val_generator) * val_generator.batch_size)
-
-    val_predictions = np.zeros((len(model_list), val_example_count, 28))
-    val_labels = np.zeros((len(model_list), val_example_count, 28))
-
-    '''
     # create an empty array to catch the validation predictions
-    if args.gpu_count > 1:
-        # keras multi gpu models require all batches in the prediction run to be full, so we pad for the last batch
-        val_predictions = np.zeros((len(model_list), len(validation_set) + val_generator.last_batch_padding, 28))
-        val_labels = np.zeros((len(model_list), len(validation_set) + val_generator.last_batch_padding, 28))
-    else:
-        val_predictions = np.zeros((len(model_list), len(validation_set), 28))
-        val_labels = np.zeros((len(model_list), len(validation_set), 28))
+    val_predictions = np.zeros((len(model_list), len(validation_set), 28))
+    val_labels = np.zeros((len(model_list), len(validation_set), 28))
 
-    '''
     # loop through the validation data and make predictions
     logging.info('Calculating ensembled thresholds...')
     for j, m in enumerate(model_list):
@@ -136,23 +121,12 @@ def ensemble_predictions(args):
         # get it each loop because the generator creates
         # different data shapes depending upon the model
         args.model_name = m[2]
-        validation_set, val_generator = hprotein.get_val_generator(args, alternate_set='val_set_kfold_{}.csv'.format(j))
+        validation_set, val_generator = hprotein.get_val_generator(args)
 
         # get the validation predictions
         logging.info('Making validation predictions...')
         for i in tqdm(range(len(val_generator))):
             images, labels = val_generator[i]
-
-            '''
-            # if the last batch is not full append blank rows
-            if images.shape[0] < val_generator.batch_size:
-                if args.gpu_count > 1:
-                    blank_rows = np.zeros((val_generator.last_batch_padding,
-                                           val_generator.shape[0],
-                                           val_generator.shape[1],
-                                           val_generator.shape[2]))
-                    images = np.append(images, blank_rows, axis=0)
-            '''
             score = model.predict(images)
             val_predictions[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = score
             val_labels[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = labels
@@ -160,14 +134,6 @@ def ensemble_predictions(args):
     # get the mean of the predictions for the model
     final_val_predictions = np.mean(val_predictions, axis=0)
     final_val_labels = val_labels[0, 0:len(validation_set), :] # labels are the same so just need one set
-
-    '''
-    # drop the blank rows
-    if args.gpu_count > 1:
-        # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
-        if images.shape[0] < val_generator.batch_size:
-            final_val_predictions = val_predictions[:, :val_predictions.shape[1] - val_generator.last_batch_padding]
-    '''
 
     # get a range between 0 and 1 by 1000ths
     rng = np.arange(0, 1, 0.001)
@@ -280,8 +246,9 @@ def ensemble_predictions(args):
     submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name), index=False)
 
     # copy the submission file to gcs
-    hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name),
-                              'gs://hprotein/submission/submit_{}.csv'.format(args.ensemble_name))
+    if hprotein.text_to_bool(args.copy_to_gcs):
+        hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name),
+                                  'gs://hprotein/submission/submit_{}.csv'.format(args.ensemble_name))
 
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 

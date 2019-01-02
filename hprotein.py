@@ -25,6 +25,8 @@ from keras.models import load_model
 from keras.utils import multi_gpu_model
 from keras.optimizers import Adam
 
+from keras_contrib.applications.resnet import ResNet
+
 from sklearn.metrics import f1_score
 
 import imgaug as ia
@@ -103,6 +105,20 @@ def get_image_fname(path, specimen_id, color, lo_res=True):
 
     return fname
 
+# -----------------------------------------
+# get input shape
+# -----------------------------------------
+def get_input_shape(model_name):
+
+    if model_name in ['InceptionV2Resnet', 'InceptionV3']:
+        shape = (299, 299, 3)
+    elif model_name in ['ResNet50', 'ResNet18']:
+        shape = (224, 224, 3)
+    else:
+        shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
+
+    return shape
+
 
 # ---------------------------------------
 # Keras style run time data generator
@@ -145,12 +161,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         self.last_batch_padding = self.batch_size - last_batch_size
 
         # shape of features
-        if model_name in ['InceptionV2Resnet','InceptionV3']:
-            self.shape = (299, 299, 3)
-        elif model_name == 'ResNet50':
-            self.shape = (256, 256, 3)
-        else:
-            self.shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
+        self.shape = get_input_shape(self.model_name)
 
         self.shuffle = shuffle  # boolean for shuffle
         self.augment = augment  # boolean for image augmentation
@@ -196,7 +207,7 @@ class HproteinDataGenerator(keras.utils.Sequence):
         if image is None:
             logging.info('Error on -> {}'.format(fname))
 
-        if self.model_name in ['InceptionV2Resnet','ResNet50','InceptionV3']:
+        if self.model_name in ['InceptionV2Resnet','ResNet50','InceptionV3','ResNet18']:
             image = cv2.resize(image, (self.shape[0], self.shape[1]))
 
         return image
@@ -356,18 +367,18 @@ def focal_loss(y_true, y_pred, gamma=2):
     return K.mean(K.sum(loss, axis=1))
 
 
+def ResNet18(input_shape, dropout=None):
+    return ResNet(input_shape=input_shape, block='basic', dropout=dropout, initial_pooling='None', include_top=False,
+                  top=None, repetitions=[2, 2, 2, 2])
+
+
 # ------------------------------
 # create the model
 # ------------------------------
 def create_model(model_name='basic_cnn'):
 
     # determine the input shape
-    if model_name in ['InceptionV2Resnet', 'InceptionV3']:
-        input_shape = (299, 299, 3)
-    elif model_name == 'ResNet50':
-        input_shape = (256, 256, 3)
-    else:
-        input_shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
+    input_shape = get_input_shape(model_name)
 
     init = Input(input_shape)
 
@@ -525,7 +536,7 @@ def create_model(model_name='basic_cnn'):
 
         base_model = InceptionResNetV2(include_top=False, weights='imagenet', input_shape=input_shape)
 
-        x = BatchNormalization(axis=-1)(init)
+        x = BatchNormalization()(init)
         x = base_model(x)
 
         x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
@@ -544,7 +555,7 @@ def create_model(model_name='basic_cnn'):
 
         base_model = InceptionV3(include_top=False, weights='imagenet', input_shape=input_shape)
 
-        x = BatchNormalization(axis=-1)(init)
+        x = BatchNormalization()(init)
         x = base_model(x)
 
         x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
@@ -574,6 +585,24 @@ def create_model(model_name='basic_cnn'):
         x = Dense(28)(x)
         x = Activation('sigmoid')(x)
 
+        model = Model(init, x)
+
+    elif model_name == 'ResNet18':
+
+        drop_rate = 0.5
+
+        base_model = ResNet18(input_shape=input_shape, dropout=drop_rate)
+
+        x = BatchNormalization()(init)
+        x = base_model(x)
+
+        x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
+        x = Flatten()(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(512, activation='relu')(x)
+        x = Dropout(drop_rate)(x)
+        x = Dense(28)(x)
+        x = Activation('sigmoid')(x)
 
         model = Model(init, x)
 
@@ -955,7 +984,7 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
 # -----------------------------------------------------
 def get_layers_to_freeze(model_name):
 
-    if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu']:
+    if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu','ResNet18']:
         first_layer = -1
         last_layer = -7
     else:

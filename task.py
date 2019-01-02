@@ -149,7 +149,7 @@ def run_training(args):
                      batch_size=args.batch_size, write_graph=False, update_freq='epoch')
 
     # learning rate decay call back
-    lr_decay = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, cooldown=3, min_lr=0.0001, verbose=1)
+    lr_decay = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, cooldown=3, min_lr=1e-5, verbose=1)
 
     # configure trainer options for the environment
     if args.gpu_count > 1:
