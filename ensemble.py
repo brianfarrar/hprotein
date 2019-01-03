@@ -36,6 +36,9 @@ def run(argv=None):
     parser.add_argument('--val_csv', dest='val_csv', default='val_set.csv',
                         help='CSV with the validation set info.')
 
+    parser.add_argument('--thresh', dest='thresh', default=-1   , type=float,
+                        help='A float between 0 and 1 for fixed thresholds, otherwise adaptive thresholds')
+
     parser.add_argument('--model_name', dest='model_name', default='gap_net_bn_relu',
                         help='Network to run.')
 
@@ -140,26 +143,48 @@ def ensemble_predictions(args):
     final_val_predictions = np.mean(val_predictions, axis=0)
     final_val_labels = val_labels[0, 0:len(validation_set), :] # labels are the same so just need one set
 
-    # get a range between 0 and 1 by 1000ths
-    rng = np.arange(0, 1, 0.001)
-
-    # set up an array to catch individual fscores for each class
-    fscores = np.zeros((rng.shape[0], 28))
-
-    # loop through each prediction above the threshold and calculate the fscore
-    logging.info('Calculating f-scores at a range of thresholds...')
-    for j,k in enumerate(tqdm(rng)):
-        for i in range(28):
-            p = np.array(final_val_predictions[:,i]>k, dtype=np.int8)
-            score = hprotein.f1_score(final_val_labels[:,i], p, average='binary')
-            fscores[j,i] = score
-
-    # Make a matrix that will hold the best threshold for each class to maximize Fscore
+    # Make a matrix that will hold the best threshold for each class to maximize Fscore or a constant threshold if
+    # we are not doing adaptive thresholds
     max_thresholds_matrix = np.empty(28)
-    for i in range(28):
-        max_thresholds_matrix[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
 
-    macro_f1 = np.mean(np.max(fscores, axis=0))
+    if args.thresh < 0:
+
+        # get a range between 0 and 1 by 1000ths
+        rng = np.arange(0, 1, 0.001)
+
+        # set up an array to catch individual fscores for each class
+        fscores = np.zeros((rng.shape[0], 28))
+
+        # loop through each prediction above the threshold and calculate the fscore
+        logging.info('Calculating f-scores at a range of thresholds...')
+        for j,k in enumerate(tqdm(rng)):
+            for i in range(28):
+                p = np.array(final_val_predictions[:,i]>k, dtype=np.int8)
+                score = hprotein.f1_score(final_val_labels[:,i], p, average='binary')
+                fscores[j,i] = score
+
+        for i in range(28):
+            max_thresholds_matrix[i] = rng[np.where(fscores[:,i] == np.max(fscores[:,i]))[0][0]]
+
+        macro_f1 = np.mean(np.max(fscores, axis=0))
+
+    else:
+        # set up an array to catch individual fscores for each class
+        fscores = np.zeros((28))
+
+        # loop through each prediction above the threshold and calculate the fscore
+        logging.info('Calculating f-scores at a fixed threshold of {} ...'.format(args.thresh))
+
+        for i in range(28):
+            p = np.array(final_val_predictions[:, i] > args.thresh, dtype=np.int8)
+            score = hprotein.f1_score(final_val_labels[:, i], p, average='binary')
+            fscores[i] = score
+
+        # set the constant threshold rather than adaptive thresholds
+        max_thresholds_matrix.fill(args.thresh)
+
+        macro_f1 = np.mean(fscores)
+
 
     logging.info('Ensembled probability threshold maximizing F1-score for each class:')
     logging.info(max_thresholds_matrix)

@@ -5,7 +5,7 @@ python3 task.py \
     --epochs=40 \
     --steps_per_epoch=-1 \
     --val_steps=-1 \
-    --initial_lr=1e-3 \
+    --initial_lr=1e-4 \
     --change_lr_epoch=30 \
     --use_class_weights="True" \
     --run_fine_tune="True" \
@@ -16,9 +16,9 @@ python3 task.py \
     --val_csv="val_set_kfold_1.csv" \
     --run_predict="True" \
     --use_adaptive_thresh="True" \
-    --new_model="True" \
+    --new_model="False" \
     --model_name="InceptionV2Resnet" \
-    --model_label="model_kf1" \
+    --model_label="model_kf1_c000f4" \
     --model_folder="models" \
     --train_folder="stage1_train_combo" \
     --label_folder="stage1_labels" \
