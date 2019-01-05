@@ -3,7 +3,7 @@ import numpy as np
 import math
 from tqdm import tqdm
 
-source_name = 'submit_ensemble_d62b39.csv'
+source_name = 'submit_ensemble_251152.csv'
 leak_file = 'leak/leak259.csv'
 submit_file = 'stage1_submit' + '/' + source_name
 hpa_file = 'hpa_csv/HPAv18RBGY_wodpl.csv'
@@ -37,4 +37,4 @@ for j in tqdm(range(len(df_submit))):
         pred_list.append([sid, predicted])
 
 df_revised_predictions = pd.DataFrame(np.asarray(pred_list))
-df_revised_predictions.to_csv('stage1_submit/submit_ensemble_d62b39_revised.csv', index=False, header=['Id','Predicted'])
+df_revised_predictions.to_csv(output_file, index=False, header=['Id','Predicted'])
