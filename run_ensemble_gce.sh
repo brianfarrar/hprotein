@@ -4,9 +4,9 @@ python3 ensemble.py \
     --ensemble_csv="ensemble_list.csv" \
     --batch_size=32 \
     --use_class_weights="True" \
-    --gpu_count=1 \
+    --gpu_count=2 \
     --thresh=-1 \
-    --val_csv="val_set_kfold_2.csv" \
+    --val_csv="val_set_kfold_4.csv" \
     --train_folder="stage1_train" \
     --model_name="gap_net_bn_relu" \
     --model_label="model" \

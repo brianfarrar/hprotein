@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 import math
+import uuid
 
 from tqdm import tqdm
 
@@ -618,7 +619,7 @@ def create_model(model_name='basic_cnn'):
 # ----------------------------------------------------
 # Gets a matrix of thresholds that maximizes fscore
 # ----------------------------------------------------
-def get_max_fscore_matrix(model, val_generator, save_eval=False):
+def get_max_fscore_matrix(args, model, val_generator, save_eval=False):
 
     # create empty arrays to receive the predictions and labels
     val_predictions = np.empty((0, 28))
@@ -659,8 +660,7 @@ def get_max_fscore_matrix(model, val_generator, save_eval=False):
 
     # write out the eval csv
     if save_eval:
-        # write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds)
-        pass
+        write_eval_csv(args, val_generator.specimen_ids, val_predictions, val_labels, max_fscore_thresholds)
 
     return max_fscore_thresholds, macro_f1
 
@@ -710,70 +710,96 @@ def get_best_model(model_folder, model_label):
 # ----------------------------------------------
 # writes out a submission file
 # ----------------------------------------------
-def write_submission_csv(args, predict_set_sids, predictions, last_batch_padding, max_thresholds_matrix):
+def write_submission_csv(args, submit, predictions, max_thresholds_matrix):
 
-    # get the list of submission specimen ids required
-    submit_data = pd.read_csv(args.submission_folder + '/sample_submission.csv')
-
-    # get the subset of labels that match the specimen images that are on TEST_PATH
-    submit_data = submit_data.loc[submit_data['Id'].isin(predict_set_sids)]
-    tmp_sid_list = submit_data['Id'].values
-
-    logging.info('Reformatting predictions and generating submission format...')
-
-    # set up a list to receive the predictions in string form
+    # convert the predictions into the submission file format
+    logging.info('Converting to submission format...')
     prediction_str = []
-
-    # eliminate padding from end of prediction
-    #predictions = predictions[:predictions.shape[0] - last_batch_padding, :]
-
-    # loop through predictions and generate the prediction string
-    for i in tqdm(range(submit_data.shape[0])):
-        submit_str = ' '
-        for j in range(predictions.shape[1]):
-            if predictions[i, j] < max_thresholds_matrix[j]:
-                submit_str += ''
+    for row in tqdm(range(submit.shape[0])):
+        str_label = ''
+        for col in range(predictions.shape[1]):
+            if text_to_bool(args.use_adaptive_thresh):
+                if predictions[row, col] < max_thresholds_matrix[col]:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
             else:
-                submit_str += str(j) + ' '
+                if predictions[row, col] <= 0.5:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
 
-        prediction_str.append(submit_str.strip())
+        prediction_str.append(str_label.strip())
 
-    submit_data['Predicted'] = np.array(prediction_str)
+    # add column to pandas dataframe for submission
+    submit['Predicted'] = np.array(prediction_str)
 
-    submit_data.to_csv(args.submission_folder + '/submit_{}.csv'.format(args.model_label), index=False)
+    # write out the csv
+    submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
+
+    # copy the submission file to gcs
+    if text_to_bool(args.copy_to_gcs):
+        copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
+                         'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
 
 
 # ----------------------------------------------
 # writes out an eval file for analysis
 # ----------------------------------------------
-def write_eval_csv(args, val_specimen_ids, val_predictions, max_fscore_thresholds):
+def write_eval_csv(args, val_specimen_ids, val_predictions, val_labels, max_thresholds_matrix):
 
-    # get the labels for all specimen_ids
-    label_data = pd.read_csv(args.label_folder)
+    # set length of labels, predictions, and specimen_ids to the same length
+    if val_predictions.shape[0] != val_specimen_ids.shape[0]:
+        #val_labels = val_labels[:val_predictions.shape[0], :]
+        val_specimen_ids = val_specimen_ids[:val_predictions.shape[0]]
 
-    # get the subset of labels that match the specimen images that are on TRAIN_PATH
-    labels_subset = label_data.loc[label_data['Id'].isin(val_specimen_ids)]
+    # convert the predictions into the submission file format
+    logging.info('Converting eval labels to submission format...')
+    ground_truth_str = []
+    for row in tqdm(range(val_labels.shape[0])):
+        str_label = ''
+        for col in range(val_labels.shape[1]):
+            if val_labels[row, col] == 0:
+                str_label += ''
+            else:
+                str_label += str(col) + ' '
+        ground_truth_str.append(str_label.strip())
 
-    # set up a list to receive the predictions in string form
-    val_predictions_str = []
+    # convert the predictions into the submission file format
+    logging.info('Converting eval predictions to submission format...')
+    eval_str = []
+    for row in tqdm(range(val_specimen_ids.shape[0])):
+        str_label = ''
+        for col in range(val_predictions.shape[1]):
+            if text_to_bool(args.use_adaptive_thresh):
+                if val_predictions[row, col] < max_thresholds_matrix[col]:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
+            else:
+                if val_predictions[row, col] <= 0.5:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
 
-    # loop through predictions and generate the prediction string
-    for i in range(val_predictions.shape[0]):
-        logging.info('Writing eval prediction #{} for specimen_id: {}'.format(i + 1, val_specimen_ids[i]))
-        submit_str = ' '
-        for j in range(val_predictions.shape[1]):
-            if val_predictions[i, j] >= max_fscore_thresholds[j]:
-                submit_str += str(j) + ' '
+        eval_str.append(str_label.strip())
 
-        val_predictions_str.append(submit_str.strip())
 
     # create dataframe and save to csv
     eval_output = pd.DataFrame()
     eval_output['Id'] = val_specimen_ids
-    eval_output['Ground_Truth'] = label_data['Target']
-    eval_output['Predictions'] = np.array(val_predictions_str)
+    eval_output['Ground_Truth'] =  np.array(ground_truth_str)
+    eval_output['Predictions'] = np.array(eval_str)
 
-    eval_output.to_csv(args.submission_folder + '/eval_{}.csv'.format(args.model_name), index=False)
+    # have to tack on a unique identifier to distinguish between fine tune and base model
+    out_fname = args.submission_folder + '/eval_{}_{}.csv'.format(args.model_label, str(uuid.uuid4())[-2:])
+    logging.info('Saving eval output to {}'.format(out_fname))
+    eval_output.to_csv(out_fname, index=False)
+
+    # copy the submission file to gcs
+    if text_to_bool(args.copy_to_gcs):
+        copy_file_to_gcs(out_fname, 'gs://hprotein/submission/{}'.format(out_fname))
+
 
 
 # ----------------------------------------------------
@@ -984,13 +1010,16 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
 
 
 # -----------------------------------------------------
-# Get layers to freeze for warm start or fine tune
+# Get layers to unfreeze for warm start or fine tune
 # -----------------------------------------------------
-def get_layers_to_freeze(model_name):
+def get_layers_to_unfreeze(model_name):
 
     if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu','ResNet18']:
         first_layer = -1
         last_layer = -7
+    elif model_name in ['gap_net_selu', 'basic_cnn']:
+        first_layer = -1
+        last_layer = -6
     else:
         first_layer = None
         last_layer = None

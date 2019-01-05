@@ -202,8 +202,8 @@ def run_training(args):
 
                 logging.info('Running a warm start...')
 
-                # freeze correct layers
-                first_layer, last_layer = hprotein.get_layers_to_freeze(args.model_name)
+                # unfreeze correct layers
+                first_layer, last_layer = hprotein.get_layers_to_unfreeze(args.model_name)
                 hprotein.freeze_layers(base_model, first_layer, last_layer)
 
                 # compile model with desired loss function
@@ -240,7 +240,7 @@ def run_training(args):
                                            verbose=1,
                                            callbacks=[checkpoint, schedule, early_stop])
 
-                # unfreeze layers
+                # unfreeze all layers
                 if args.gpu_count > 1:
                     for layer in base_model.layers:
                         layer.trainable = True
@@ -302,7 +302,7 @@ def run_training(args):
             model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr/10.)
 
         # freeze correct layers
-        first_layer, last_layer = hprotein.get_layers_to_freeze(args.model_name)
+        first_layer, last_layer = hprotein.get_layers_to_unfreeze(args.model_name)
         hprotein.freeze_layers(base_model, first_layer, last_layer)
 
         # compile model with desired loss function
@@ -360,17 +360,17 @@ def run_eval(args):
 
     # eval primary model
     logging.info('Loading primary training model...')
-    model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr/10.)
+    model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr)
     model.summary()
 
-    model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
+    model1_max_fscore_thresholds, model1_macro_f1 = hprotein.get_max_fscore_matrix(args, model, val_generator, save_eval=True)
 
     # eval fine tune model
     logging.info('Loading fine tuned training model...')
     model, base_model = hprotein.prepare_existing_model(args, lr=args.initial_lr, fine_tune=True)
     model.summary()
 
-    model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(model, val_generator)
+    model2_max_fscore_thresholds, model2_macro_f1 = hprotein.get_max_fscore_matrix(args, model, val_generator, save_eval=True)
 
     if model1_macro_f1 > model2_macro_f1:
         logging.info('Primary model has a better Macro-F1, saving thresholds...')
@@ -457,6 +457,9 @@ def run_predict(args):
         if images.shape[0] < predict_generator.batch_size:
             predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
 
+    hprotein.write_submission_csv(args, submit, predictions, max_thresholds_matrix)
+
+    '''
     # convert the predictions into the submission file format
     logging.info('Converting to submission format...')
     prediction_str = []
@@ -486,7 +489,7 @@ def run_predict(args):
     if hprotein.text_to_bool(args.copy_to_gcs):
         hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
                                   'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
-
+    '''
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 
 
