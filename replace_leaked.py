@@ -3,11 +3,11 @@ import numpy as np
 import math
 from tqdm import tqdm
 
-source_name = 'submit_ensemble_251152.csv'
+source_name = 'submit_ensemble_251152'
 leak_file = 'leak/leak259.csv'
-submit_file = 'stage1_submit' + '/' + source_name
+submit_file = 'stage1_submit' + '/' + source_name + '.csv'
 hpa_file = 'hpa_csv/HPAv18RBGY_wodpl.csv'
-output_file = 'stage1_submit' + '/' + source_name +'_revised.csv'
+output_file = 'stage1_submit' + '/' + source_name + '_revised.csv'
 
 df_leak = pd.read_csv(leak_file)
 df_submit = pd.read_csv(submit_file)
