@@ -117,6 +117,8 @@ def get_input_shape(model_name):
         shape = (224, 224, 3)
     elif model_name in ['gap_res']:
         shape = (256, 256, 3)
+    elif model_name in ['InceptionV2Resnet_Large', 'InceptionV3_Large', 'ResNet50', 'ResNet18_Large']:
+        shape = (IMAGE_SIZE, IMAGE_SIZE, 3)
     else:
         shape = (IMAGE_SIZE, IMAGE_SIZE, 4)
 
@@ -533,7 +535,7 @@ def create_model(model_name='basic_cnn'):
 
         model = Model(init, x)
 
-    elif model_name == 'InceptionV2Resnet':
+    elif model_name in ['InceptionV2Resnet','InceptionV2Resnet_Large']:
 
         drop_rate = 0.5
 
@@ -552,7 +554,7 @@ def create_model(model_name='basic_cnn'):
 
         model = Model(init, x)
 
-    elif model_name == 'InceptionV3':
+    elif model_name in ['InceptionV3','InceptionV3_Large']:
 
         drop_rate = 0.5
 
@@ -571,7 +573,7 @@ def create_model(model_name='basic_cnn'):
 
         model = Model(init, x)
 
-    elif model_name == 'ResNet50':
+    elif model_name in ['ResNet50','ResNet50_Large']:
 
         drop_rate = 0.5
 
@@ -590,7 +592,7 @@ def create_model(model_name='basic_cnn'):
 
         model = Model(init, x)
 
-    elif model_name == 'ResNet18':
+    elif model_name in ['ResNet18','ResNet18_Large']:
 
         drop_rate = 0.5
 
@@ -792,13 +794,13 @@ def write_eval_csv(args, val_specimen_ids, val_predictions, val_labels, max_thre
     eval_output['Predictions'] = np.array(eval_str)
 
     # have to tack on a unique identifier to distinguish between fine tune and base model
-    out_fname = args.submission_folder + '/eval_{}_{}.csv'.format(args.model_label, str(uuid.uuid4())[-2:])
+    out_fname = 'eval_{}_{}.csv'.format(args.model_label, str(uuid.uuid4())[-2:])
     logging.info('Saving eval output to {}'.format(out_fname))
-    eval_output.to_csv(out_fname, index=False)
+    eval_output.to_csv(args.submission_folder + '/' + out_fname, index=False)
 
     # copy the submission file to gcs
     if text_to_bool(args.copy_to_gcs):
-        copy_file_to_gcs(out_fname, 'gs://hprotein/submission/{}'.format(out_fname))
+        copy_file_to_gcs(args.submission_folder + '/' + out_fname, 'gs://hprotein/eval/{}'.format(out_fname))
 
 
 
@@ -957,6 +959,17 @@ def get_model_list(args):
 
     return model_list
 
+# -------------------------------------------------------------
+# Returns a list of the models to ensemble
+# -------------------------------------------------------------
+def get_golden_list(args):
+
+    df_golden_list = pd.read_csv(args.golden_csv)
+    golden_list = df_golden_list.values.tolist()
+
+    return golden_list
+
+
 
 # -------------------------------------------------------------
 # Freezes layers of a model for fine tuning
@@ -1014,7 +1027,8 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
 # -----------------------------------------------------
 def get_layers_to_unfreeze(model_name):
 
-    if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu','ResNet18']:
+    if model_name in ['ResNet50','InceptionV2Resnet','InceptionV3','gap_net_bn_relu','ResNet18',
+                      'ResNet50_Large', 'InceptionV2Resnet_Large', 'InceptionV3_Large', 'ResNet18_Large']:
         first_layer = -1
         last_layer = -7
     elif model_name in ['gap_net_selu', 'basic_cnn']:

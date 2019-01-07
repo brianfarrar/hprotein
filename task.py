@@ -197,7 +197,8 @@ def run_training(args):
                 model = base_model
 
             # for pretrained models run a warm start first
-            if args.model_name in ['ResNet50','InceptionV2Resnet','InceptionV3']:
+            if args.model_name in ['ResNet50','InceptionV2Resnet','InceptionV3',
+                                   'ResNet50_Large','InceptionV2Resnet_Large','InceptionV3_Large']:
 
 
                 logging.info('Running a warm start...')
@@ -459,37 +460,6 @@ def run_predict(args):
 
     hprotein.write_submission_csv(args, submit, predictions, max_thresholds_matrix)
 
-    '''
-    # convert the predictions into the submission file format
-    logging.info('Converting to submission format...')
-    prediction_str = []
-    for row in tqdm(range(submit.shape[0])):
-        str_label = ''
-        for col in range(predictions.shape[1]):
-            if hprotein.text_to_bool(args.use_adaptive_thresh):
-                if predictions[row, col] < max_thresholds_matrix[col]:
-                    str_label += ''
-                else:
-                    str_label += str(col) + ' '
-            else:
-                if predictions[row, col] <= 0.5:
-                    str_label += ''
-                else:
-                    str_label += str(col) + ' '
-
-        prediction_str.append(str_label.strip())
-
-    # add column to pandas dataframe for submission
-    submit['Predicted'] = np.array(prediction_str)
-
-    # write out the csv
-    submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.model_label), index=False)
-
-    # copy the submission file to gcs
-    if hprotein.text_to_bool(args.copy_to_gcs):
-        hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.model_label),
-                                  'gs://hprotein/submission/submit_{}.csv'.format(args.model_label))
-    '''
     logging.info('Model: {} prediction run complete!'.format(args.model_label))
 
 

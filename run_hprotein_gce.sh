@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 python3 task.py \
-    --run_training="True" \
+    --run_training="False" \
     --batch_size=32 \
     --epochs=40 \
     --steps_per_epoch=-1 \
@@ -8,7 +8,7 @@ python3 task.py \
     --initial_lr=1e-3 \
     --change_lr_epoch=30 \
     --use_class_weights="True" \
-    --run_fine_tune="True" \
+    --run_fine_tune="False" \
     --fine_tune_epochs=2 \
     --loss_function="binary_crossentropy" \
     --gpu_count=2 \
@@ -16,9 +16,9 @@ python3 task.py \
     --val_csv="val_set_kfold_4.csv" \
     --run_predict="False" \
     --use_adaptive_thresh="True" \
-    --new_model="True" \
-    --model_name="ResNet50" \
-    --model_label="model_kf4" \
+    --new_model="False" \
+    --model_name="basic_cnn" \
+    --model_label="model_kf4_fcb630" \
     --model_folder="models" \
     --train_folder="stage1_train" \
     --label_folder="stage1_labels" \

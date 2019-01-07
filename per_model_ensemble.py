@@ -21,6 +21,9 @@ def run(argv=None):
     parser.add_argument('--ensemble_csv', dest='ensemble_csv', default='ensemble_models',
                         help='Folder containing the models to ensemble')
 
+    parser.add_argument('--golden_csv', dest='golden_csv', default='golden_models',
+                        help='Folder containing the list of targets and models that are golden')
+
     parser.add_argument('--batch_size', dest='batch_size', default=32, type=int,
                         help='Number of examples per batch')
 
@@ -77,6 +80,46 @@ def run(argv=None):
 
     ensemble_predictions(args)
 
+'''
+# --------------------------------------
+# list of models to use for each label
+# --------------------------------------
+gold_model = [[0, 'model_kf4_145404'],
+              [1, 'model_kf4_b1a73d'],
+              [2, 'model_kf4_145404'],
+              [3, 'model_kf4_b1a73d'],
+              [4, 'model_kf4_b1a73d'],
+              [5, 'model_kf4_b58461'],
+              [6, 'model_kf4_b1a73d'],
+              [7, 'model_kf4_b1a73d'],
+              [8, 'model_kf4_b1a73d'],
+              [9, 'model_kf4_b1a73d'],
+              [10, 'model_kf4_b1a73d'],
+              [11, 'model_kf4_b58461'],
+              [12, 'model_kf4_b58461'],
+              [13, 'model_kf4_145404'],
+              [14, 'model_kf4_b58461'],
+              [15, 'model_kf4_b1a73d'],
+              [16, 'model_kf4_145404'],
+              [17, 'model_kf4_b1a73d'],
+              [18, 'model_kf4_145404'],
+              [19, 'model_kf4_b1a73d'],
+              [20, 'model_kf4_145404'],
+              [21, 'model_kf4_145404'],
+              [22, 'model_kf4_145404'],
+              [23, 'model_kf4_b1a73d'],
+              [24, 'model_kf4_b1a73d'],
+              [25, 'model_kf4_145404'],
+              [26, 'model_kf4_b1a73d'],
+              [27, 'model_kf4_145404']
+]
+
+
+model_list =  [['model_kf4_145404','focal_loss','InceptionV2Resnet'],
+               ['model_kf4_b1a73d','binary_crossentropy','gap_net_bn_relu'],
+               ['model_kf4_b58461','binary_crossentropy','InceptionV3_Large']
+]
+'''
 
 # --------------------------------------
 # ensembles predictions into a single
@@ -98,17 +141,23 @@ def ensemble_predictions(args):
     for i, ens_model in enumerate(model_list):
         logging.info('{} -> {} | {} | {}'.format(i, ens_model[0], ens_model[1], ens_model[2]))
 
+    # get gold list
+    gold_model = hprotein.get_golden_list(args)
+    logging.info('Targets will be predicted from the models as follows:')
+    for gold in gold_model:
+        logging.info('Target {} -> {}'.format(gold[0], gold[1]))
+
     #
     # Use validation data to calculate thresholds
     #
 
     # create an empty array to catch the validation predictions
-    val_predictions = np.zeros((len(model_list), len(validation_set), 28))
-    val_labels = np.zeros((len(model_list), len(validation_set), 28))
+    val_predictions = np.zeros((len(validation_set), 28))
+    val_labels = np.zeros((len(validation_set), 28))
 
     # loop through the validation data and make predictions
     logging.info('Calculating ensembled thresholds...')
-    for j, m in enumerate(model_list):
+    for m in model_list:
 
         model, _ = hprotein.get_best_model(args.model_folder, m[0])
         model.summary()
@@ -133,12 +182,16 @@ def ensemble_predictions(args):
         for i in tqdm(range(len(val_generator))):
             images, labels = val_generator[i]
             score = model.predict(images)
-            val_predictions[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = score
-            val_labels[j, i * val_generator.batch_size : ((i * val_generator.batch_size) + score.shape[0])] = labels
 
-    # get the mean of the predictions for the model
-    final_val_predictions = np.mean(val_predictions, axis=0)
-    final_val_labels = val_labels[0, 0:len(validation_set), :] # labels are the same so just need one set
+            # labels are the same for all models
+            val_labels[i * val_generator.batch_size: ((i * val_generator.batch_size) + score.shape[0])] = labels
+
+            # only save scores for the labels that this model is golden for
+            for j in range(len(gold_model)):
+                if m[0] == gold_model[j][1]:
+                    val_predictions[i * val_generator.batch_size :
+                                    ((i * val_generator.batch_size) + score.shape[0]), j] = score[:, j]
+
 
     # Make a matrix that will hold the best threshold for each class to maximize Fscore or a constant threshold if
     # we are not doing adaptive thresholds
@@ -156,8 +209,8 @@ def ensemble_predictions(args):
         logging.info('Calculating f-scores at a range of thresholds...')
         for j,k in enumerate(tqdm(rng)):
             for i in range(28):
-                p = np.array(final_val_predictions[:,i]>k, dtype=np.int8)
-                score = hprotein.f1_score(final_val_labels[:,i], p, average='binary')
+                p = np.array(val_predictions[:,i]>k, dtype=np.int8)
+                score = hprotein.f1_score(val_labels[:,i], p, average='binary')
                 fscores[j,i] = score
 
         for i in range(28):
@@ -173,8 +226,8 @@ def ensemble_predictions(args):
         logging.info('Calculating f-scores at a fixed threshold of {} ...'.format(args.thresh))
 
         for i in range(28):
-            p = np.array(final_val_predictions[:, i] > args.thresh, dtype=np.int8)
-            score = hprotein.f1_score(final_val_labels[:, i], p, average='binary')
+            p = np.array(val_predictions[:, i] > args.thresh, dtype=np.int8)
+            score = hprotein.f1_score(val_labels[:, i], p, average='binary')
             fscores[i] = score
 
         # set the constant threshold rather than adaptive thresholds
@@ -182,11 +235,9 @@ def ensemble_predictions(args):
 
         macro_f1 = np.mean(fscores)
 
-
     logging.info('Ensembled probability threshold maximizing F1-score for each class:')
     logging.info(max_thresholds_matrix)
     logging.info('Ensembled Macro F1 Score -> {}'.format(macro_f1))
-
 
     #
     # Get predictions
@@ -195,15 +246,15 @@ def ensemble_predictions(args):
     # create an empty array to catch the predictions
     if args.gpu_count > 1:
         # keras multi gpu models require all batches in the prediction run to be full, so we pad for the last batch
-        predictions = np.zeros((len(model_list), predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
+        predictions = np.zeros((predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
     else:
-        predictions = np.zeros((len(model_list), predict_set_sids.shape[0], 28))
+        predictions = np.zeros((predict_set_sids.shape[0], 28))
 
     # read in the list of samples in the correct order to submit
     submit = pd.read_csv('{}/{}'.format(args.submission_folder, args.submission_list))
 
     # loop through each model and generate scores
-    for j, m in enumerate(model_list):
+    for m in model_list:
 
         # get the best model and related threshold matrix
         model, _ = hprotein.get_best_model(args.model_folder, m[0])
@@ -239,17 +290,18 @@ def ensemble_predictions(args):
                     images = np.append(images, blank_rows, axis=0)
 
             score = model.predict(images)
-            predictions[j, i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
 
-    # get the mean of the predictions for the model
-    final_predictions = np.mean(predictions, axis=0)
-
+            # only save scores for the labels that this model is golden for
+            for j in range(len(gold_model)):
+                if m[0] == gold_model[j][1]:
+                    predictions[i * predict_generator.batch_size :
+                                    ((i * predict_generator.batch_size) + score.shape[0]), j] = score[:, j]
 
     # drop the blank rows
     if args.gpu_count > 1:
         # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
         if images.shape[0] < predict_generator.batch_size:
-            final_predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
+            predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
 
     # remind the log which thresholds are being used
     logging.info('Ensembled probability threshold maximizing F1-score for each class:')
@@ -260,8 +312,8 @@ def ensemble_predictions(args):
     prediction_str = []
     for row in tqdm(range(submit.shape[0])):
         str_label = ''
-        for col in range(final_predictions.shape[1]):
-            if final_predictions[row, col] < max_thresholds_matrix[col]:
+        for col in range(predictions.shape[1]):
+            if predictions[row, col] < max_thresholds_matrix[col]:
                 str_label += ''
             else:
                 str_label += str(col) + ' '
