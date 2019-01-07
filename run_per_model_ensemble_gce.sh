@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-python3 ensemble.py \
+python3 per_model_ensemble.py \
     --ensemble_name="ensemble" \
     --ensemble_csv="per_model_ensemble_list.csv" \
     --golden_csv="golden_list.csv" \
