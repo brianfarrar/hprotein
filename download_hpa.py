@@ -5,12 +5,14 @@ from tqdm import tqdm
 import requests
 import pandas as pd
 from PIL import Image
+import numpy as np
 
 def download(pid, image_list, base_url, save_dir, image_size=(512, 512)):
     colors = ['red', 'green', 'blue', 'yellow']
     for i in tqdm(image_list, postfix=pid):
         img_id = i.split('_', 1)
-        for color in colors:
+        for j, color in enumerate(colors):
+            arr_out = np.zeros((512, 512, 3))
             img_path = img_id[0] + '/' + img_id[1] + '_' + color + '.jpg'
             img_name = i + '_' + color + '.png'
             img_url = base_url + img_path
@@ -22,8 +24,15 @@ def download(pid, image_list, base_url, save_dir, image_size=(512, 512)):
             # Use PIL to resize the image and to convert it to L
             # (8-bit pixels, black and white)
             im = Image.open(r.raw)
-            im = im.resize(image_size, Image.LANCZOS).convert('L')
-            im.save(os.path.join(save_dir, img_name), 'PNG')
+            im = im.resize(image_size, Image.LANCZOS)
+            if j == 3:  # Yellow
+                im = np.asarray(im)
+                arr_out = np.array(((im[:, :, 0] + im[:, :, 1]) / 2).astype('uint8'))
+            else:
+                arr_out[:, :, j] = np.array(np.array(im)[:, :, j]).astype('uint8')
+            im_pil = Image.fromarray(arr_out.astype('uint8'))
+            im_pil.save(os.path.join(save_dir, img_name), 'png')
+
 
 if __name__ == '__main__':
     # Parameters
@@ -31,6 +40,7 @@ if __name__ == '__main__':
     image_size = (512, 512)
     url = 'http://v18.proteinatlas.org/images/'
     csv_path =  "hpa_csv/HPAv18RBGY_wodpl.csv"
+    #csv_path = "hpa_csv/hpa_short.csv"
     save_dir = "hpa_data"
 
     # Create the directory to save the images in case it doesn't exist

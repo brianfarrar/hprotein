@@ -49,6 +49,9 @@ def run(argv=None):
     parser.add_argument('--fine_tune_epochs', dest='fine_tune_epochs', default=3, type=int,
                         help='Number of epochs to fine tune')
 
+    parser.add_argument('--optimizer', dest='optimizer', default='Adam',
+                        help='Which optimizer to use for the run')
+
     parser.add_argument('--loss_function', dest='loss_function', default='focal_loss',
                         help='Which loss function to use for the run')
 
@@ -208,6 +211,8 @@ def run_training(args):
                 hprotein.freeze_layers(base_model, first_layer, last_layer)
 
                 # compile model with desired loss function
+                hprotein.compile_model(args, model)
+                '''
                 if args.loss_function == 'f1_loss':
                     model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
                                   metrics=['accuracy', hprotein.f1])
@@ -217,7 +222,7 @@ def run_training(args):
                 elif args.loss_function == 'focal_loss':
                     model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
                                   metrics=['accuracy', hprotein.f1])
-
+                '''
                 model.summary()
 
                 # warms start constants
@@ -250,6 +255,8 @@ def run_training(args):
                         layer.trainable = True
 
             # compile model with desired loss function
+            hprotein.compile_model(args, model)
+            '''
             if args.loss_function == 'f1_loss':
                 model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
                               metrics=['accuracy', hprotein.f1])
@@ -259,6 +266,7 @@ def run_training(args):
             elif args.loss_function == 'focal_loss':
                 model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
                               metrics=['accuracy', hprotein.f1])
+            '''
 
         # if this is a run on an existing model, then load and compile
         logging.info('Starting full model training...')
@@ -307,6 +315,8 @@ def run_training(args):
         hprotein.freeze_layers(base_model, first_layer, last_layer)
 
         # compile model with desired loss function
+        hprotein.compile_model(args, model)
+        '''
         if args.loss_function == 'f1_loss':
             model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
                           metrics=['accuracy', hprotein.f1])
@@ -316,7 +326,7 @@ def run_training(args):
         elif args.loss_function == 'focal_loss':
             model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
                           metrics=['accuracy', hprotein.f1])
-
+        '''
         model.summary()
 
         fths = model.fit_generator(training_generator,
@@ -410,6 +420,9 @@ def run_predict(args):
 
     if args.gpu_count > 1:
         # compile model with desired loss function
+        hprotein.compile_model(args, final_model)
+
+        '''
         if args.loss_function == 'f1_loss':
             final_model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=args.initial_lr),
                                 metrics=['accuracy', hprotein.f1])
@@ -419,7 +432,7 @@ def run_predict(args):
         elif args.loss_function == 'focal_loss':
             final_model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=args.initial_lr),
                                 metrics=['accuracy', hprotein.f1])
-
+        '''
         final_model.summary()
 
     # generate predictions

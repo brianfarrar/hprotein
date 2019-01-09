@@ -80,47 +80,6 @@ def run(argv=None):
 
     ensemble_predictions(args)
 
-'''
-# --------------------------------------
-# list of models to use for each label
-# --------------------------------------
-gold_model = [[0, 'model_kf4_145404'],
-              [1, 'model_kf4_b1a73d'],
-              [2, 'model_kf4_145404'],
-              [3, 'model_kf4_b1a73d'],
-              [4, 'model_kf4_b1a73d'],
-              [5, 'model_kf4_b58461'],
-              [6, 'model_kf4_b1a73d'],
-              [7, 'model_kf4_b1a73d'],
-              [8, 'model_kf4_b1a73d'],
-              [9, 'model_kf4_b1a73d'],
-              [10, 'model_kf4_b1a73d'],
-              [11, 'model_kf4_b58461'],
-              [12, 'model_kf4_b58461'],
-              [13, 'model_kf4_145404'],
-              [14, 'model_kf4_b58461'],
-              [15, 'model_kf4_b1a73d'],
-              [16, 'model_kf4_145404'],
-              [17, 'model_kf4_b1a73d'],
-              [18, 'model_kf4_145404'],
-              [19, 'model_kf4_b1a73d'],
-              [20, 'model_kf4_145404'],
-              [21, 'model_kf4_145404'],
-              [22, 'model_kf4_145404'],
-              [23, 'model_kf4_b1a73d'],
-              [24, 'model_kf4_b1a73d'],
-              [25, 'model_kf4_145404'],
-              [26, 'model_kf4_b1a73d'],
-              [27, 'model_kf4_145404']
-]
-
-
-model_list =  [['model_kf4_145404','focal_loss','InceptionV2Resnet'],
-               ['model_kf4_b1a73d','binary_crossentropy','gap_net_bn_relu'],
-               ['model_kf4_b58461','binary_crossentropy','InceptionV3_Large']
-]
-'''
-
 # --------------------------------------
 # ensembles predictions into a single
 # --------------------------------------
@@ -159,7 +118,7 @@ def ensemble_predictions(args):
     logging.info('Calculating ensembled thresholds...')
     for m in model_list:
 
-        model, _ = hprotein.get_best_model(args.model_folder, m[0])
+        model = hprotein.get_specific_model(args.model_folder, m[0])
         model.summary()
 
         if args.gpu_count > 1:
@@ -191,7 +150,6 @@ def ensemble_predictions(args):
                 if m[0] == gold_model[j][1]:
                     val_predictions[i * val_generator.batch_size :
                                     ((i * val_generator.batch_size) + score.shape[0]), j] = score[:, j]
-
 
     # Make a matrix that will hold the best threshold for each class to maximize Fscore or a constant threshold if
     # we are not doing adaptive thresholds
@@ -257,7 +215,7 @@ def ensemble_predictions(args):
     for m in model_list:
 
         # get the best model and related threshold matrix
-        model, _ = hprotein.get_best_model(args.model_folder, m[0])
+        model = hprotein.get_specific_model(args.model_folder, m[0])
 
         if args.gpu_count > 1:
             # compile model with desired loss function

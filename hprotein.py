@@ -24,7 +24,7 @@ from keras.applications import InceptionResNetV2, ResNet50, InceptionV3
 from keras.layers.noise import AlphaDropout
 from keras.models import load_model
 from keras.utils import multi_gpu_model
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 
 from keras_contrib.applications.resnet import ResNet
 
@@ -594,12 +594,14 @@ def create_model(model_name='basic_cnn'):
 
     elif model_name in ['ResNet18','ResNet18_Large']:
 
-        drop_rate = 0.5
+        drop_rate = 0.1
 
         base_model = ResNet18(input_shape=input_shape, dropout=drop_rate)
 
         x = BatchNormalization()(init)
         x = base_model(x)
+
+        x = BatchNormalization()(x)
 
         x = Conv2D(128, kernel_size=(1, 1), activation='relu')(x)
         x = Flatten()(x)
@@ -707,6 +709,23 @@ def get_best_model(model_folder, model_label):
         logging.info(max_thresholds_matrix)
 
     return final_model, max_thresholds_matrix
+
+
+# ----------------------------------------------------
+# Returns a specific model from disk
+# ----------------------------------------------------
+def get_specific_model(model_folder, model_label):
+
+    # load model
+    if model_label.endswith('fine_tune'):
+        logging.info('Loading model {}...'.format(model_label))
+        model = load_model('{}/{}.model'.format(model_folder, model_label),
+                           custom_objects={'f1': f1, 'f1_loss': f1_loss, 'focal_loss': focal_loss})
+    else:
+        model = load_model('{}/{}.model'.format(model_folder, model_label),
+                                 custom_objects={'f1': f1, 'focal_loss': focal_loss})
+
+    return model
 
 
 # ----------------------------------------------
@@ -883,14 +902,14 @@ over_sample_labels_dict = {
     5: 2513,
     6: 1008,
     7: 2822,
-    8: 479,
-    9: 431,
-    10: 366,
+    8: 1127,
+    9: 1005,
+    10: 1263,
     11: 1093,
     12: 688,
     13: 537,
     14: 1066,
-    15: 336,
+    15: 1029,
     16: 530,
     17: 210,
     18: 902,
@@ -902,7 +921,7 @@ over_sample_labels_dict = {
     24: 322,
     25: 8228,
     26: 328,
-    27: 365
+    27: 1123
 }
 
 
@@ -987,6 +1006,41 @@ def freeze_layers(model, first_layer, last_layer):
     return model
 
 
+# ------------------------------------
+# compiles the models
+# ------------------------------------
+def compile_model(args, model):
+
+    # compile model with desired loss function and optimizer
+
+    if args.optimizer == 'Adam':
+
+        if args.loss_function == 'f1_loss':
+            model.compile(loss=f1_loss, optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+        elif args.loss_function == 'binary_crossentropy':
+            model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+        elif args.loss_function == 'focal_loss':
+            model.compile(loss=focal_loss, optimizer=Adam(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+
+    elif args.optimizer == 'SGD':
+
+        if args.loss_function == 'f1_loss':
+            model.compile(loss=f1_loss, optimizer=SGD(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+        elif args.loss_function == 'binary_crossentropy':
+            model.compile(loss='binary_crossentropy', optimizer=SGD(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+        elif args.loss_function == 'focal_loss':
+            model.compile(loss=focal_loss, optimizer=SGD(lr=args.initial_lr),
+                          metrics=['accuracy', f1])
+
+    else:
+        logging.info('Invalid optimzer...')
+
+
 # -------------------------------------------------------------
 # Prepares an existing model for use
 # -------------------------------------------------------------
@@ -1012,13 +1066,15 @@ def prepare_existing_model(args, lr=1e-3, fine_tune=False):
         model = base_model
 
     # compile model with desired loss function
+    compile_model(args, model)
+    '''
     if args.loss_function == 'f1_loss':
         model.compile(loss=f1_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
     elif args.loss_function == 'binary_crossentropy':
         model.compile(loss='binary_crossentropy', optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
     elif args.loss_function == 'focal_loss':
         model.compile(loss=focal_loss, optimizer=Adam(lr=args.initial_lr), metrics=['accuracy', f1])
-
+    '''
     return model, base_model
 
 
