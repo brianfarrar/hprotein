@@ -21,6 +21,9 @@ def run(argv=None):
     parser.add_argument('--ensemble_csv', dest='ensemble_csv', default='ensemble_models',
                         help='Folder containing the models to ensemble')
 
+    parser.add_argument('--gen_predictions', dest='gen_predictions', default='True',
+                        help='Text boolean to decide whether to generate predictions')
+
     parser.add_argument('--batch_size', dest='batch_size', default=32, type=int,
                         help='Number of examples per batch')
 
@@ -66,22 +69,45 @@ def run(argv=None):
     parser.add_argument('--copy_to_gcs', dest='copy_to_gcs', default='True',
                         help='Text boolean to decide whether to copy to gcs')
 
-
     # get the command line arguments
     args, _ = parser.parse_known_args(argv)
 
-    # Create a unique ensemble name
-    unique_id = str(uuid.uuid4())[-6:]
-    logging.info('Ensemble -> {}'.format(unique_id))
-    args.ensemble_name = '{}_{}'.format(args.ensemble_name, unique_id)
+    # used to compare multiple models
+    model_list = [
+        [
+            ['model_kf4_c40c8b','binary_crossentropy','InceptionV2Resnet_Large'],
+            ['model_kf4_b58461','binary_crossentropy','InceptionV3_Large']
+        ],
+        [
+            ['model_kf4_b58461','binary_crossentropy','InceptionV3_Large'],
+            ['model_kf4_059637','binary_crossentropy','InceptionV2Resnet_Large'],
+            ['model_kf4_c40c8b','binary_crossentropy','InceptionV2Resnet_Large']
+        ],
+        [
+            ['model_kf4_6f1a27','focal_loss','gap_net_bn_relu'],
+            ['model_kf4_b58461','binary_crossentropy','InceptionV3_Large'],
+            ['model_kf4_059637','binary_crossentropy','InceptionV2Resnet_Large'],
+            ['model_kf4_c40c8b','binary_crossentropy','InceptionV2Resnet_Large']
+        ]
+    ]
 
-    ensemble_predictions(args)
+
+    if args.ensemble_csv == '':
+        for ensemble in model_list:
+            # Create a unique ensemble name
+            unique_id = str(uuid.uuid4())[-6:]
+            logging.info('Ensemble -> {}'.format(unique_id))
+            args.ensemble_name = '{}_{}'.format(args.ensemble_name, unique_id)
+
+            ensemble_predictions(args, gen_predictions=args.gen_predictions, ensemble=ensemble)
+    else:
+        ensemble_predictions(args, gen_predictions=args.gen_predictions)
 
 
 # --------------------------------------
 # ensembles predictions into a single
 # --------------------------------------
-def ensemble_predictions(args):
+def ensemble_predictions(args, gen_predictions=True, ensemble=None):
 
     # get predict data
     logging.info('Reading predict test set from {}...'.format(args.predict_folder))
@@ -93,7 +119,11 @@ def ensemble_predictions(args):
     validation_set, val_generator = hprotein.get_val_generator(args)
 
     # get model list
-    model_list = hprotein.get_model_list(args)
+    if ensemble == None:
+        model_list = hprotein.get_model_list(args)
+    else:
+        model_list = ensemble
+
     logging.info('Ensembling {} models as follows:'.format(len(model_list)))
     for i, ens_model in enumerate(model_list):
         logging.info('{} -> {} | {} | {}'.format(i, ens_model[0], ens_model[1], ens_model[2]))
@@ -188,97 +218,98 @@ def ensemble_predictions(args):
     logging.info('Ensembled Macro F1 Score -> {}'.format(macro_f1))
 
 
-    #
-    # Get predictions
-    #
+    if hprotein.text_to_bool(args.gen_predictions):
+        #
+        # Get predictions
+        #
 
-    # create an empty array to catch the predictions
-    if args.gpu_count > 1:
-        # keras multi gpu models require all batches in the prediction run to be full, so we pad for the last batch
-        predictions = np.zeros((len(model_list), predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
-    else:
-        predictions = np.zeros((len(model_list), predict_set_sids.shape[0], 28))
-
-    # read in the list of samples in the correct order to submit
-    submit = pd.read_csv('{}/{}'.format(args.submission_folder, args.submission_list))
-
-    # loop through each model and generate scores
-    for j, m in enumerate(model_list):
-
-        # get the best model and related threshold matrix
-        model, _ = hprotein.get_best_model(args.model_folder, m[0])
-
+        # create an empty array to catch the predictions
         if args.gpu_count > 1:
-            # compile model with desired loss function
-            if m[1] == 'binary_crossentropy':
-                model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-            elif m[1] == 'f1_loss':
-                model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
-            elif m[1] == 'focal_loss':
-                model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+            # keras multi gpu models require all batches in the prediction run to be full, so we pad for the last batch
+            predictions = np.zeros((len(model_list), predict_set_sids.shape[0] + predict_generator.last_batch_padding, 28))
+        else:
+            predictions = np.zeros((len(model_list), predict_set_sids.shape[0], 28))
 
-            model.summary()
+        # read in the list of samples in the correct order to submit
+        submit = pd.read_csv('{}/{}'.format(args.submission_folder, args.submission_list))
 
-        args.model_name = m[2]
-        predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids,
-                                                           predict_set_lbls,
-                                                           model_name=args.model_name)
+        # loop through each model and generate scores
+        for j, m in enumerate(model_list):
 
-        # get the predictions
-        logging.info('Making predictions...')
-        for i in tqdm(range(len(predict_generator))):
-            images, labels = predict_generator[i]
+            # get the best model and related threshold matrix
+            model, _ = hprotein.get_best_model(args.model_folder, m[0])
 
-            # if the last batch is not full append blank rows
+            if args.gpu_count > 1:
+                # compile model with desired loss function
+                if m[1] == 'binary_crossentropy':
+                    model.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+                elif m[1] == 'f1_loss':
+                    model.compile(loss=hprotein.f1_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+                elif m[1] == 'focal_loss':
+                    model.compile(loss=hprotein.focal_loss, optimizer=Adam(lr=1e-4), metrics=['accuracy', hprotein.f1])
+
+                model.summary()
+
+            args.model_name = m[2]
+            predict_generator = hprotein.HproteinDataGenerator(args, args.predict_folder, predict_set_sids,
+                                                               predict_set_lbls,
+                                                               model_name=args.model_name)
+
+            # get the predictions
+            logging.info('Making predictions...')
+            for i in tqdm(range(len(predict_generator))):
+                images, labels = predict_generator[i]
+
+                # if the last batch is not full append blank rows
+                if images.shape[0] < predict_generator.batch_size:
+                    if args.gpu_count > 1:
+                        blank_rows = np.zeros((predict_generator.last_batch_padding,
+                                               predict_generator.shape[0],
+                                               predict_generator.shape[1],
+                                               predict_generator.shape[2]))
+                        images = np.append(images, blank_rows, axis=0)
+
+                score = model.predict(images)
+                predictions[j, i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
+
+        # get the mean of the predictions for the model
+        final_predictions = np.mean(predictions, axis=0)
+
+
+        # drop the blank rows
+        if args.gpu_count > 1:
+            # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
             if images.shape[0] < predict_generator.batch_size:
-                if args.gpu_count > 1:
-                    blank_rows = np.zeros((predict_generator.last_batch_padding,
-                                           predict_generator.shape[0],
-                                           predict_generator.shape[1],
-                                           predict_generator.shape[2]))
-                    images = np.append(images, blank_rows, axis=0)
+                final_predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
 
-            score = model.predict(images)
-            predictions[j, i * predict_generator.batch_size : ((i * predict_generator.batch_size) + score.shape[0])] = score
+        # remind the log which thresholds are being used
+        logging.info('Ensembled probability threshold maximizing F1-score for each class:')
+        logging.info(max_thresholds_matrix)
 
-    # get the mean of the predictions for the model
-    final_predictions = np.mean(predictions, axis=0)
+        # convert the predictions into the submission file format
+        logging.info('Converting to submission format...')
+        prediction_str = []
+        for row in tqdm(range(submit.shape[0])):
+            str_label = ''
+            for col in range(final_predictions.shape[1]):
+                if final_predictions[row, col] < max_thresholds_matrix[col]:
+                    str_label += ''
+                else:
+                    str_label += str(col) + ' '
+            prediction_str.append(str_label.strip())
 
+        # add column to pandas dataframe for submission
+        submit['Predicted'] = np.array(prediction_str)
 
-    # drop the blank rows
-    if args.gpu_count > 1:
-        # keras multigpu models require all batches in the prediction run to be full, so we drop the padded predictions
-        if images.shape[0] < predict_generator.batch_size:
-            final_predictions = predictions[:predictions.shape[1] - predict_generator.last_batch_padding]
+        # write out the csv
+        submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name), index=False)
 
-    # remind the log which thresholds are being used
-    logging.info('Ensembled probability threshold maximizing F1-score for each class:')
-    logging.info(max_thresholds_matrix)
+        # copy the submission file to gcs
+        if hprotein.text_to_bool(args.copy_to_gcs):
+            hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name),
+                                      'gs://hprotein/submission/submit_{}.csv'.format(args.ensemble_name))
 
-    # convert the predictions into the submission file format
-    logging.info('Converting to submission format...')
-    prediction_str = []
-    for row in tqdm(range(submit.shape[0])):
-        str_label = ''
-        for col in range(final_predictions.shape[1]):
-            if final_predictions[row, col] < max_thresholds_matrix[col]:
-                str_label += ''
-            else:
-                str_label += str(col) + ' '
-        prediction_str.append(str_label.strip())
-
-    # add column to pandas dataframe for submission
-    submit['Predicted'] = np.array(prediction_str)
-
-    # write out the csv
-    submit.to_csv('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name), index=False)
-
-    # copy the submission file to gcs
-    if hprotein.text_to_bool(args.copy_to_gcs):
-        hprotein.copy_file_to_gcs('{}/submit_{}.csv'.format(args.submission_folder, args.ensemble_name),
-                                  'gs://hprotein/submission/submit_{}.csv'.format(args.ensemble_name))
-
-    logging.info('Model: {} prediction run complete!'.format(args.model_label))
+        logging.info('Model: {} prediction run complete!'.format(args.model_label))
 
 
 # ---------------------------------

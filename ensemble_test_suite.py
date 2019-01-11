@@ -43,9 +43,9 @@ for f in eval_file_list:
 
     predictions = np.asarray(predictions)
     ground_truth = np.asarray(ground_truth)
-    print(predictions.shape)
-    print(ground_truth.shape)
-    print(len(df_eval))
+    #print(predictions.shape)
+    #print(ground_truth.shape)
+    #print(len(df_eval))
 
     score = f1_score(ground_truth, predictions, average='macro')
     print('{} -> Macro-F1: {}'.format(f, score))

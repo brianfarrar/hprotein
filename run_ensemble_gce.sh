@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 python3 ensemble.py \
     --ensemble_name="ensemble" \
-    --ensemble_csv="ensemble_list.csv" \
+    --ensemble_csv="" \
+    --gen_predictions="False" \
     --batch_size=32 \
     --use_class_weights="True" \
     --gpu_count=2 \

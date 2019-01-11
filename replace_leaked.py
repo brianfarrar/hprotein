@@ -3,7 +3,8 @@ import numpy as np
 import math
 from tqdm import tqdm
 
-source_name = 'submit_ensemble_3e79a0'
+#source_name = 'submit_ensemble_f9c85a'
+source_name = 'submit_final_ensemble'
 leak_file = 'leak/leak259.csv'
 submit_file = 'stage1_submit' + '/' + source_name + '.csv'
 hpa_file = 'hpa_csv/HPAv18RBGY_wodpl.csv'
@@ -15,7 +16,7 @@ df_hpa = pd.read_csv(hpa_file)
 
 pred_list = []
 replaced_list = []
-for j in tqdm(range(len(df_submit))):
+for j in range(len(df_submit)):
     sid = df_submit['Id'][j]
     predicted = df_submit['Predicted'][j]
     if (len(df_leak.loc[df_leak['Test'] == sid])) == 1:

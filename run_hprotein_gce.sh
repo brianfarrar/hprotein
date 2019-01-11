@@ -11,7 +11,7 @@ python3 task.py \
     --run_fine_tune="True" \
     --fine_tune_epochs=2 \
     --optimizer="Adam" \
-    --loss_function="focal_loss" \
+    --loss_function="binary_crossentropy" \
     --gpu_count=2 \
     --run_eval="True" \
     --val_csv="val_set_kfold_4.csv" \
